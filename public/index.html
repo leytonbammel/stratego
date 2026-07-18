@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Stratego Online</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <div id="app">
+    <div id="toast-container"></div>
+    
+    <!-- Lobby Screen -->
+    <div id="lobby-screen" class="screen active">
+      <h1>Stratego Online</h1>
+      <div id="conn-status">Connecting to server…</div>
+      <button id="btn-create">Create Game</button>
+      <div style="margin: 20px 0; text-align: center;">OR</div>
+      <div class="join-area">
+        <input type="text" id="join-code" placeholder="Room Code" maxlength="4">
+        <button id="btn-join">Join</button>
+      </div>
+    </div>
+    
+    <!-- Setup Screen -->
+    <div id="setup-screen" class="screen">
+      <div class="header">
+        <div id="room-code-display">Room: <span></span></div>
+        <div id="setup-status">Place your pieces...</div>
+      </div>
+      <div class="game-area">
+        <div class="board-container">
+          <div id="setup-board" class="board"></div>
+        </div>
+        <div class="tray-panel">
+          <h3>Pieces</h3>
+          <div id="tray" class="tray"></div>
+          <div class="setup-controls">
+            <button id="btn-autofill">Auto-fill</button>
+            <button id="btn-clear">Clear</button>
+            <button id="btn-ready" disabled>Ready</button>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Play Screen -->
+    <div id="play-screen" class="screen">
+      <div class="play-layout">
+        <div class="side-panel left">
+          <div id="turn-indicator">Waiting...</div>
+          <div class="captured-area">
+            <h4>Pieces Left</h4>
+            <div id="captured-own">Your side: 40 alive</div>
+            <div id="captured-enemy">Enemy side: 40 alive</div>
+          </div>
+          <div style="flex:1;"></div>
+          <div class="game-controls">
+            <button id="btn-resign" style="width: 100%; background: var(--accent-red);">Resign</button>
+          </div>
+        </div>
+        
+        <div class="board-container">
+          <div id="play-board" class="board"></div>
+        </div>
+        
+        <div class="side-panel right">
+          <h4>Chat</h4>
+          <div class="chat-panel">
+            <div id="chat-messages"></div>
+            <form id="chat-form">
+              <input type="text" id="chat-input" placeholder="Message..." autocomplete="off">
+              <button type="submit">Send</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Game Over Modal -->
+    <div id="gameover-modal" class="modal hidden">
+      <h2 id="gameover-title">Game Over</h2>
+      <p id="gameover-reason"></p>
+      <button id="btn-rematch">Rematch</button>
+    </div>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
