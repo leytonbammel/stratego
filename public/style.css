@@ -386,3 +386,13 @@ input[type="text"] {
   border: 1px solid rgba(255, 207, 107, 0.3);
 }
 #conn-status.hidden { display: none; }
+
+.btn-end-room {
+  width: 100%;
+  margin-top: 8px;
+  background: transparent;
+  border: 1px solid var(--accent-red);
+  color: var(--accent-red);
+}
+.btn-end-room:hover { background: var(--accent-red); color: #fff; }
+.btn-end-room.hidden { display: none; }

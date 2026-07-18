@@ -287,6 +287,23 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    if (type === 'endRoom') {
+      // Only the host (south, the creator) may close the room.
+      if (wsColor !== 'south') {
+        return sendTo(ws, { type: 'error', message: 'Only the host can close the room.' });
+      }
+      broadcastToRoom(room, { type: 'roomClosed' });
+      rooms.delete(room.code);
+      ['south', 'north'].forEach(color => {
+        const p = room.players[color];
+        if (p && p.ws) {
+          p.connected = false;
+          p.ws.close(1000, 'room closed');
+        }
+      });
+      return;
+    }
+
     if (type === 'rematch') {
       if (room.phase !== 'gameover') return;
       player.ready = false;

@@ -103,6 +103,33 @@ function initWebSocket() {
   };
 }
 
+// The "Close Room" control belongs to the host (south) only.
+function updateHostControls() {
+  const isHost = myColor === 'south';
+  ['btn-end-room-setup', 'btn-end-room-play'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.classList.toggle('hidden', !isHost);
+  });
+}
+
+// Tear down all room state and return to the lobby.
+function resetToLobby() {
+  localStorage.removeItem('roomCode');
+  localStorage.removeItem('token');
+  localStorage.removeItem('color');
+  roomCode = null;
+  token = null;
+  myColor = null;
+  gameState = null;
+  phase = 'lobby';
+  opponentPresent = false;
+  setupInitialized = false;
+  document.getElementById('gameover-modal').classList.add('hidden');
+  document.getElementById('join-code').value = '';
+  updateHostControls();
+  showScreen('lobby');
+}
+
 function handleMessage(msg) {
   switch(msg.type) {
     case 'created':
@@ -114,6 +141,11 @@ function handleMessage(msg) {
       localStorage.setItem('token', token);
       localStorage.setItem('color', myColor);
       document.querySelector('#room-code-display span').textContent = roomCode;
+      updateHostControls();
+      break;
+    case 'roomClosed':
+      resetToLobby();
+      showToast(myColor === 'south' ? 'Room closed.' : 'The host closed the room.');
       break;
     case 'phase':
       phase = msg.phase;
@@ -553,6 +585,14 @@ document.addEventListener('DOMContentLoaded', () => {
     send({ type: 'rematch' });
     document.getElementById('btn-rematch').disabled = true;
   };
+
+  ['btn-end-room-setup', 'btn-end-room-play'].forEach(id => {
+    document.getElementById(id).onclick = () => {
+      if (confirm("Close this room? This ends the game and disconnects both players.")) {
+        send({ type: 'endRoom' });
+      }
+    };
+  });
   
   document.getElementById('chat-form').onsubmit = (e) => {
     e.preventDefault();
