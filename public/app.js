@@ -56,6 +56,18 @@ const RANKS = {
 };
 const RANK_ORDER = ['10', '9', '8', '7', '6', '5', '4', '3', '2', '1', 'B', 'F'];
 
+// Display only: classic numbering counts up as rank falls (Marshal 1 ... Scout 9, Spy S).
+// Internal ranks stay 10-high so all engine comparisons are untouched.
+const RANK_LABELS = {
+  '10': '1', '9': '2', '8': '3', '7': '4', '6': '5',
+  '5': '6', '4': '7', '3': '8', '2': '9', '1': 'S',
+  'B': 'B', 'F': 'F'
+};
+function rankLabel(rank) {
+  const key = String(rank);
+  return RANK_LABELS[key] || key;
+}
+
 const screens = ['lobby', 'setup', 'play'];
 function showScreen(name) {
   screens.forEach(s => document.getElementById(s + '-screen').classList.remove('active'));
@@ -281,7 +293,7 @@ function renderSetupBoard() {
         let pDiv = document.createElement('div');
         pDiv.className = 'piece own';
         let shortName = RANKS[piece] ? RANKS[piece].name.substring(0,3) : piece;
-        pDiv.innerHTML = `<span class="p-rank">${piece}</span><span class="p-name">${shortName}</span>`;
+        pDiv.innerHTML = `<span class="p-rank">${rankLabel(piece)}</span><span class="p-name">${shortName}</span>`;
         cellDiv.appendChild(pDiv);
       }
       
@@ -300,7 +312,7 @@ function renderTray() {
     div.className = 'tray-item' + (selectedTrayRank === rank ? ' selected' : '') + (count === 0 ? ' empty' : '');
     div.innerHTML = `
       <div class="tray-piece">
-        <span class="p-rank">${rank}</span>
+        <span class="p-rank">${rankLabel(rank)}</span>
       </div>
       <div class="tray-count">x${count}</div>
     `;
@@ -434,7 +446,7 @@ function renderPlayBoard() {
         if (cellData.own || cellData.revealed) {
            let rankStr = String(cellData.rank);
            let shortName = RANKS[rankStr] ? RANKS[rankStr].name.substring(0,3) : rankStr;
-           pieceDiv.innerHTML = `<span class="p-rank">${rankStr}</span><span class="p-name">${shortName}</span>`;
+           pieceDiv.innerHTML = `<span class="p-rank">${rankLabel(rankStr)}</span><span class="p-name">${shortName}</span>`;
         } else {
            pieceDiv.classList.add('unrevealed');
         }
