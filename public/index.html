@@ -61,9 +61,26 @@
           </div>
 
           <div class="captured-area">
-            <h4>Pieces Left</h4>
-            <div id="captured-own">Your side: 40 alive</div>
-            <div id="captured-enemy">Enemy side: 40 alive</div>
+            <h4>Captured</h4>
+            <div class="captured-group">
+              <div class="captured-label">
+                Enemy losses <span id="captured-enemy" class="alive-count">40 left</span>
+              </div>
+              <div id="cap-list-enemy" class="captured-chips">
+                <span class="cap-empty">None yet</span>
+              </div>
+            </div>
+            <div class="captured-group">
+              <div class="captured-label">
+                Your losses <span id="captured-own" class="alive-count">40 left</span>
+              </div>
+              <div id="cap-list-own" class="captured-chips">
+                <span class="cap-empty">None yet</span>
+              </div>
+            </div>
+          </div>
+          <div class="reveal-legend">
+            <span class="legend-swatch"></span> White ring = your opponent has seen this piece
           </div>
           <div style="flex:1;"></div>
           <div class="game-controls">

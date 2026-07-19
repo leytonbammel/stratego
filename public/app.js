@@ -40,6 +40,7 @@ let legalTargets = [];
 let opponentPresent = false;
 let setupInitialized = false;
 let opponentOnline = true;
+let capturedList = [];   // [{rank, owner}] in the order pieces fell, from the server
 
 const RANKS = {
   '10': { name: 'Marshal', count: 1 },
@@ -139,6 +140,8 @@ function resetToLobby() {
   setupInitialized = false;
   setOpponentOnline(true);
   hideGameOver();
+  capturedList = [];
+  renderCaptured();
   document.getElementById('join-code').value = '';
   updateHostControls();
   showScreen('lobby');
@@ -165,6 +168,8 @@ function handleMessage(msg) {
       phase = msg.phase;
       if (phase === 'waiting' || phase === 'setup') {
         if (!setupInitialized) { initSetup(); setupInitialized = true; }
+        capturedList = [];      // fresh board on a rematch
+        renderCaptured();
         showScreen('setup');
         document.getElementById('btn-rematch').disabled = false;
         hideGameOver();
@@ -190,6 +195,10 @@ function handleMessage(msg) {
       break;
     case 'state':
       gameState = msg.view;
+      if (Array.isArray(msg.captured)) {
+        capturedList = msg.captured;
+        renderCaptured();
+      }
       // Keep rendering after the game ends — this is the revealed board players review.
       if (phase === 'play' || phase === 'gameover') {
         renderPlayBoard();
@@ -247,8 +256,8 @@ function showToast(msg, isError=false) {
 function toastBattle(b) {
   if (!b) return;
   let myRole = b.attacker.owner === myColor ? 'You' : 'Opponent';
-  let aName = getRankName(b.attacker.rank);
-  let dName = getRankName(b.defender.rank);
+  let aName = pieceLabel(b.attacker.rank);
+  let dName = pieceLabel(b.defender.rank);
   
   let text = '';
   if (b.outcome === 'attacker') {
@@ -264,6 +273,12 @@ function toastBattle(b) {
 function getRankName(r) {
   if (RANKS[r]) return `${RANKS[r].name}`;
   return String(r);
+}
+
+// "Miner (8)" — name plus the symbol shown on the board, so the toast text
+// matches what the player is actually looking at.
+function pieceLabel(r) {
+  return `${getRankName(r)} (${rankLabel(r)})`;
 }
 
 function appendChat(from, text) {
@@ -303,6 +318,39 @@ function hideGameOver() {
   if (panel) panel.classList.add('hidden');
   const resign = document.getElementById('btn-resign');
   if (resign) resign.classList.remove('hidden');
+}
+
+// Running log of every piece that has been taken, newest last, split by side.
+// Battle results are public knowledge, so nothing here leaks hidden information.
+function renderCaptured() {
+  const lists = {
+    own: document.getElementById('cap-list-own'),
+    enemy: document.getElementById('cap-list-enemy')
+  };
+  if (!lists.own || !lists.enemy) return;
+
+  lists.own.innerHTML = '';
+  lists.enemy.innerHTML = '';
+
+  capturedList.forEach((p, i) => {
+    const mine = p.owner === myColor;
+    const chip = document.createElement('span');
+    chip.className = 'cap-chip ' + (mine ? 'own' : 'enemy');
+    chip.textContent = rankLabel(p.rank);
+    chip.title = `#${i + 1}: ${pieceLabel(p.rank)} — ${mine ? 'yours' : 'theirs'}`;
+    (mine ? lists.own : lists.enemy).appendChild(chip);
+  });
+
+  ['own', 'enemy'].forEach(side => {
+    if (!lists[side].childElementCount) {
+      const none = document.createElement('span');
+      none.className = 'cap-empty';
+      none.textContent = 'None yet';
+      lists[side].appendChild(none);
+    } else {
+      lists[side].scrollTop = lists[side].scrollHeight;
+    }
+  });
 }
 
 function isHomeRow(r) {
@@ -523,6 +571,12 @@ function renderPlayBoard() {
       if (cellData && cellData !== 'lake') {
         let pieceDiv = document.createElement('div');
         pieceDiv.className = 'piece ' + (cellData.own ? 'own' : 'enemy');
+        // Mark your own pieces whose rank the opponent has already seen. Skipped
+        // once the game is over, since the review reveals everything anyway.
+        if (cellData.own && cellData.revealed && phase === 'play') {
+          pieceDiv.classList.add('revealed-to-enemy');
+          pieceDiv.title = 'Your opponent has seen this piece';
+        }
         if (cellData.own || cellData.revealed) {
            let rankStr = String(cellData.rank);
            let shortName = RANKS[rankStr] ? RANKS[rankStr].name.substring(0,3) : rankStr;
@@ -606,8 +660,8 @@ function updateGameStatus() {
       }
     }
   }
-  document.getElementById('captured-own').textContent = `Your side: ${ownPieces} alive`;
-  document.getElementById('captured-enemy').textContent = `Enemy side: ${enemyPieces} alive`;
+  document.getElementById('captured-own').textContent = `${ownPieces} left`;
+  document.getElementById('captured-enemy').textContent = `${enemyPieces} left`;
 }
 
 document.addEventListener('DOMContentLoaded', () => {

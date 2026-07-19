@@ -50,15 +50,35 @@ function broadcastToRoom(room, message) {
   });
 }
 
+// Both sides of a battle are always revealed to both players, so the capture
+// log is public information — safe to send verbatim to either client.
+function stateMessage(room, color) {
+  return {
+    type: 'state',
+    view: engine.redactView(room.gameState, color),
+    captured: room.captured || []
+  };
+}
+
 function sendStateToBoth(room) {
   if (!room.gameState) return;
   ['south', 'north'].forEach(color => {
     const p = room.players[color];
     if (p && p.connected) {
-      const view = engine.redactView(room.gameState, color);
-      sendTo(p.ws, { type: 'state', view });
+      sendTo(p.ws, stateMessage(room, color));
     }
   });
+}
+
+// A battle removes the loser(s); record them in the order they fell.
+function recordCaptures(room, battle) {
+  if (!battle) return;
+  if (battle.outcome === 'attacker' || battle.outcome === 'both') {
+    room.captured.push({ rank: battle.defender.rank, owner: battle.defender.owner });
+  }
+  if (battle.outcome === 'defender' || battle.outcome === 'both') {
+    room.captured.push({ rank: battle.attacker.rank, owner: battle.attacker.owner });
+  }
 }
 
 function sendSetupStatus(room) {
@@ -127,6 +147,7 @@ wss.on('connection', (ws) => {
         },
         gameState: null,
         chat: [],
+        captured: [],
         phase: 'waiting',
         lastActivity: Date.now()
       };
@@ -200,8 +221,7 @@ wss.on('connection', (ws) => {
       if (room.phase === 'setup' || room.phase === 'waiting') {
         sendSetupStatus(room);
       } else if (room.gameState) {
-        const view = engine.redactView(room.gameState, color);
-        sendTo(ws, { type: 'state', view });
+        sendTo(ws, stateMessage(room, color));
       }
       
       return;
@@ -257,7 +277,9 @@ wss.on('connection', (ws) => {
       if (result.state) {
         room.gameState = result.state;
       }
-      
+
+      recordCaptures(room, result.battle);
+
       sendStateToBoth(room);
       
       if (result.battle) {
@@ -332,6 +354,7 @@ wss.on('connection', (ws) => {
         player.wantsRematch = false;
         opp.wantsRematch = false;
         room.gameState = null;
+        room.captured = [];
         setPhase(room, 'setup');
         sendSetupStatus(room);
       }
