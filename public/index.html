@@ -27,6 +27,7 @@
       <div class="header">
         <div id="room-code-display">Room: <span></span></div>
         <div id="setup-status">Place your pieces...</div>
+        <div id="setup-opponent-status" class="opponent-status hidden"></div>
       </div>
       <div class="game-area">
         <div class="board-container">
@@ -50,6 +51,15 @@
       <div class="play-layout">
         <div class="side-panel left">
           <div id="turn-indicator">Waiting...</div>
+          <div id="play-opponent-status" class="opponent-status hidden"></div>
+
+          <div id="gameover-panel" class="hidden">
+            <h3 id="gameover-title">Game Over</h3>
+            <p id="gameover-reason"></p>
+            <p class="review-hint">All pieces are face-up — review the board as long as you like.</p>
+            <button id="btn-rematch">Rematch</button>
+          </div>
+
           <div class="captured-area">
             <h4>Pieces Left</h4>
             <div id="captured-own">Your side: 40 alive</div>
@@ -79,12 +89,6 @@
       </div>
     </div>
     
-    <!-- Game Over Modal -->
-    <div id="gameover-modal" class="modal hidden">
-      <h2 id="gameover-title">Game Over</h2>
-      <p id="gameover-reason"></p>
-      <button id="btn-rematch">Rematch</button>
-    </div>
   </div>
   <script src="app.js"></script>
 </body>

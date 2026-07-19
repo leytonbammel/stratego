@@ -39,6 +39,7 @@ let selectedBoardCell = null;
 let legalTargets = [];
 let opponentPresent = false;
 let setupInitialized = false;
+let opponentOnline = true;
 
 const RANKS = {
   '10': { name: 'Marshal', count: 1 },
@@ -112,6 +113,18 @@ function updateHostControls() {
   });
 }
 
+// Persistent "your opponent dropped" banner, shown on both the setup and play screens.
+// Cleared as soon as they come back, so it always reflects the live connection.
+function setOpponentOnline(online, note) {
+  opponentOnline = online;
+  ['setup-opponent-status', 'play-opponent-status'].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.textContent = note || '';
+    el.classList.toggle('hidden', online);
+  });
+}
+
 // Tear down all room state and return to the lobby.
 function resetToLobby() {
   localStorage.removeItem('roomCode');
@@ -124,7 +137,8 @@ function resetToLobby() {
   phase = 'lobby';
   opponentPresent = false;
   setupInitialized = false;
-  document.getElementById('gameover-modal').classList.add('hidden');
+  setOpponentOnline(true);
+  hideGameOver();
   document.getElementById('join-code').value = '';
   updateHostControls();
   showScreen('lobby');
@@ -153,7 +167,7 @@ function handleMessage(msg) {
         if (!setupInitialized) { initSetup(); setupInitialized = true; }
         showScreen('setup');
         document.getElementById('btn-rematch').disabled = false;
-        document.getElementById('gameover-modal').classList.add('hidden');
+        hideGameOver();
         document.querySelector('#room-code-display span').textContent = roomCode;
         if (phase === 'waiting') {
           opponentPresent = false;
@@ -166,14 +180,18 @@ function handleMessage(msg) {
       } else if (phase === 'play') {
         setupInitialized = false;
         showScreen('play');
-        document.getElementById('gameover-modal').classList.add('hidden');
+        hideGameOver();
       } else if (phase === 'gameover') {
-        // gameover modal is handled via gameover event
+        // Stay on the play screen so the final board stays visible for review.
+        // The result card itself is filled in by the 'gameover' message.
+        setupInitialized = false;
+        showScreen('play');
       }
       break;
     case 'state':
       gameState = msg.view;
-      if (phase === 'play') {
+      // Keep rendering after the game ends — this is the revealed board players review.
+      if (phase === 'play' || phase === 'gameover') {
         renderPlayBoard();
         updateGameStatus();
       }
@@ -199,7 +217,14 @@ function handleMessage(msg) {
       appendChat(msg.from, msg.text);
       break;
     case 'opponent':
-      showToast(`Opponent ${msg.status}`);
+      if (msg.status === 'left') {
+        setOpponentOnline(false, 'Opponent disconnected — waiting for them to reconnect…');
+        showToast('Your opponent disconnected.', true);
+      } else {
+        const back = msg.status === 'joined' ? 'Opponent joined.' : 'Opponent reconnected.';
+        setOpponentOnline(true);
+        showToast(back);
+      }
       break;
     case 'error':
       showToast(msg.message, true);
@@ -250,11 +275,34 @@ function appendChat(from, text) {
   box.scrollTop = box.scrollHeight;
 }
 
+const REASON_TEXT = {
+  flag: 'The flag was captured.',
+  resign: 'Resignation.',
+  nomoves: 'No legal moves remaining.',
+  'no-moves': 'No legal moves remaining.'
+};
+
+// The result is a side card, not an overlay, so the final board stays fully visible.
 function showGameOver(winner, reason) {
-  const modal = document.getElementById('gameover-modal');
-  modal.classList.remove('hidden');
-  document.getElementById('gameover-title').textContent = winner === myColor ? 'You Win!' : 'You Lose!';
-  document.getElementById('gameover-reason').textContent = `Reason: ${reason}`;
+  const panel = document.getElementById('gameover-panel');
+  const won = winner === myColor;
+  panel.classList.remove('hidden');
+  panel.classList.toggle('win', won);
+  panel.classList.toggle('loss', !won);
+  document.getElementById('gameover-title').textContent = won ? 'You Win!' : 'You Lose!';
+  document.getElementById('gameover-reason').textContent = REASON_TEXT[reason] || `Reason: ${reason}`;
+  document.getElementById('btn-rematch').disabled = false;
+  document.getElementById('btn-resign').classList.add('hidden');
+  selectedBoardCell = null;
+  legalTargets = [];
+  if (gameState) renderPlayBoard();
+}
+
+function hideGameOver() {
+  const panel = document.getElementById('gameover-panel');
+  if (panel) panel.classList.add('hidden');
+  const resign = document.getElementById('btn-resign');
+  if (resign) resign.classList.remove('hidden');
 }
 
 function isHomeRow(r) {
@@ -537,7 +585,10 @@ function handlePlayCellClick(r, c, cellData) {
 
 function updateGameStatus() {
   const indicator = document.getElementById('turn-indicator');
-  if (gameState.turn === myColor) {
+  if (phase === 'gameover') {
+    indicator.textContent = 'Game over — reviewing board';
+    indicator.className = 'their-turn';
+  } else if (gameState.turn === myColor) {
     indicator.textContent = "Your Turn";
     indicator.className = "my-turn";
   } else {

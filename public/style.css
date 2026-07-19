@@ -23,14 +23,17 @@ body {
   justify-content: center;
   align-items: center;
   height: 100vh;
+  height: 100dvh; /* dvh keeps mobile browser chrome from cropping the layout */
   overflow: hidden;
 }
+
+.hidden { display: none !important; }
 
 h1, h2, h3, h4 { margin-top: 0; }
 
 #app {
   width: 100%;
-  max-width: 1000px;
+  max-width: 1400px;
   height: 100%;
   position: relative;
   display: flex;
@@ -66,7 +69,10 @@ button {
   transition: opacity 0.2s;
 }
 
-button:hover { opacity: 0.8; }
+/* hover:hover so touch devices don't get a hover state stuck after a tap */
+@media (hover: hover) {
+  button:hover { opacity: 0.8; }
+}
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 
 input[type="text"] {
@@ -93,13 +99,19 @@ input[type="text"] {
 }
 
 /* Board */
+/* Side panels take a fixed slice; the board claims everything left over. */
 .board-container {
-  flex: 2;
+  flex: 1 1 auto;
   display: flex;
   justify-content: center;
   align-items: center;
+  min-width: 0;
+  min-height: 0;
 }
 
+/* The board is always square and takes the largest size that fits BOTH the
+   available width and the leftover viewport height. --board-cap is the height
+   budget, which differs per screen (the setup screen also has a header). */
 .board {
   display: grid;
   grid-template-columns: repeat(10, 1fr);
@@ -108,10 +120,12 @@ input[type="text"] {
   background: var(--board-grid);
   padding: 2px;
   border-radius: 4px;
-  width: 100%;
-  max-width: 600px;
+  width: min(100%, 820px, var(--board-cap, 80vh));
   aspect-ratio: 1;
 }
+
+#setup-screen { --board-cap: calc(100dvh - 150px); }
+#play-screen  { --board-cap: calc(100dvh - 40px); }
 
 .cell {
   background: var(--panel-bg);
@@ -190,15 +204,10 @@ input[type="text"] {
   padding: 10px;
 }
 
-@media (max-width: 768px) {
-  .game-area, .play-layout {
-    flex-direction: column;
-    overflow-y: auto;
-  }
-}
 
 .tray-panel {
-  flex: 1;
+  flex: 0 1 300px;
+  min-width: 220px;
   background: var(--panel-bg);
   padding: 15px;
   border-radius: 8px;
@@ -266,7 +275,8 @@ input[type="text"] {
 }
 
 .side-panel {
-  flex: 1;
+  flex: 0 1 260px;
+  min-width: 200px;
   background: var(--panel-bg);
   padding: 15px;
   border-radius: 8px;
@@ -360,20 +370,43 @@ input[type="text"] {
 .toast.error { background: rgba(255, 59, 48, 0.95); }
 .toast.fadeout { opacity: 0; }
 
-/* Modal */
-.modal {
-  position: absolute;
-  top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.85);
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  z-index: 2000;
-  gap: 15px;
+/* Game-over result card — sits in the side panel so the final board stays
+   fully visible for review instead of being covered by an overlay. */
+#gameover-panel {
+  padding: 14px;
+  border-radius: 8px;
+  background: #262626;
+  border: 1px solid #444;
+  border-left: 4px solid #888;
 }
 
-.modal.hidden { display: none; }
+#gameover-panel.win  { border-left-color: var(--own-border); }
+#gameover-panel.loss { border-left-color: var(--accent-red); }
+
+#gameover-panel h3 { margin: 0 0 6px; font-size: 1.25rem; }
+#gameover-panel.win  h3 { color: var(--own-border); }
+#gameover-panel.loss h3 { color: var(--accent-red); }
+
+#gameover-panel p { margin: 0 0 8px; font-size: 0.9rem; }
+
+#gameover-panel .review-hint {
+  color: #9a9a9a;
+  font-size: 0.8rem;
+  margin-bottom: 12px;
+}
+
+#btn-rematch { width: 100%; }
+
+/* Opponent connection banner */
+.opponent-status {
+  padding: 8px 12px;
+  border-radius: 8px;
+  font-size: 0.85rem;
+  text-align: center;
+  color: #ffcf6b;
+  background: rgba(255, 207, 107, 0.12);
+  border: 1px solid rgba(255, 207, 107, 0.3);
+}
 
 #conn-status {
   text-align: center;
@@ -394,5 +427,83 @@ input[type="text"] {
   border: 1px solid var(--accent-red);
   color: var(--accent-red);
 }
-.btn-end-room:hover { background: var(--accent-red); color: #fff; }
+@media (hover: hover) {
+  .btn-end-room:hover { background: var(--accent-red); color: #fff; }
+}
 .btn-end-room.hidden { display: none; }
+
+/* ---------------------------------------------------------------------------
+   Mobile. Kept last in the file so these rules win over the base layout above.
+   The page itself scrolls here; the old inner-scroller approach clipped the
+   setup controls somewhere the user could never reach them.
+   --------------------------------------------------------------------------- */
+@media (max-width: 768px) {
+  body {
+    height: auto;
+    min-height: 100dvh;
+    overflow-y: auto;
+    align-items: flex-start;
+  }
+
+  #app { height: auto; min-height: 100dvh; }
+  .screen { height: auto; min-height: 100dvh; }
+
+  .game-area, .play-layout {
+    flex-direction: column;
+    overflow: visible;
+  }
+
+  /* Board takes most of the screen; the rest scrolls into view beneath it. */
+  #setup-screen { --board-cap: 52dvh; }
+  #play-screen  { --board-cap: 62dvh; }
+
+  /* Stack the header so room code and status don't fight over one line. */
+  .header {
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 12px;
+    text-align: center;
+    font-size: 0.85rem;
+  }
+
+  #room-code-display { font-size: 1rem; font-weight: bold; }
+  #setup-status { color: #bdbdbd; }
+
+  /* In column flow a flex-basis becomes a height — let panels size to content. */
+  .side-panel, .tray-panel {
+    flex: 0 0 auto;
+    min-height: auto;
+    min-width: 0;
+  }
+
+  .tray {
+    flex: 0 0 auto;
+    overflow: visible;
+  }
+
+  /* Auto-fill / Clear / Ready stay pinned above the fold no matter how tall
+     the tray gets or what the mobile browser chrome does. */
+  .setup-controls {
+    position: sticky;
+    bottom: 0;
+    z-index: 50;
+    margin: 15px -15px -15px;
+    padding: 10px 15px calc(10px + env(safe-area-inset-bottom, 0px));
+    background: var(--panel-bg);
+    border-top: 1px solid #333;
+    box-shadow: 0 -6px 16px rgba(0, 0, 0, 0.45);
+  }
+
+  .setup-controls button {
+    flex: 1 1 40%;
+    padding: 10px 12px;
+    font-size: 15px;
+  }
+
+  /* Board first on the play screen — otherwise the status panel pushes it
+     off the bottom of the phone screen. */
+  .play-layout .board-container { order: -1; }
+
+  .chat-panel { min-height: 220px; }
+}

@@ -83,6 +83,19 @@ function sendSetupStatus(room) {
   }
 }
 
+// Once the game is over there is nothing left to hide, so flip every piece face-up
+// and push the state again. This is what lets both players review the final board.
+function revealAllAndSend(room) {
+  if (!room.gameState) return;
+  for (let r = 0; r < 10; r++) {
+    for (let c = 0; c < 10; c++) {
+      const piece = room.gameState.board[r][c];
+      if (piece) piece.revealed = true;
+    }
+  }
+  sendStateToBoth(room);
+}
+
 function setPhase(room, phase) {
   room.phase = phase;
   if (room.gameState) room.gameState.phase = phase;
@@ -253,11 +266,13 @@ wss.on('connection', (ws) => {
       
       if (result.gameOver) {
         setPhase(room, 'gameover');
+        revealAllAndSend(room);
         broadcastToRoom(room, { type: 'gameover', winner: result.winner, reason: result.reason });
       } else {
         const go = engine.checkGameOver(room.gameState);
         if (go && go.over) {
            setPhase(room, 'gameover');
+           revealAllAndSend(room);
            broadcastToRoom(room, { type: 'gameover', winner: go.winner, reason: go.reason });
         }
       }
@@ -282,6 +297,7 @@ wss.on('connection', (ws) => {
     if (type === 'resign') {
       if (room.phase !== 'play') return;
       setPhase(room, 'gameover');
+      revealAllAndSend(room);
       const oppColor = wsColor === 'south' ? 'north' : 'south';
       broadcastToRoom(room, { type: 'gameover', winner: oppColor, reason: 'resign' });
       return;
@@ -337,6 +353,10 @@ wss.on('connection', (ws) => {
     const opp = room.players[oppColor];
     if (opp && opp.connected) {
       sendTo(opp.ws, { type: 'opponent', status: 'left' });
+    }
+    // During setup the other player must not be able to hit Ready into an empty room.
+    if (room.phase === 'setup' || room.phase === 'waiting') {
+      sendSetupStatus(room);
     }
   });
 });
