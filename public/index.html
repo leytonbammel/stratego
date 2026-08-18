@@ -15,10 +15,51 @@
       <h1>Stratego Online</h1>
       <div id="conn-status">Connecting to server…</div>
       <button id="btn-create">Create Game</button>
-      <div style="margin: 20px 0; text-align: center;">OR</div>
+      <div class="lobby-or">OR</div>
       <div class="join-area">
-        <input type="text" id="join-code" placeholder="Room Code" maxlength="4">
+        <!-- maxlength is deliberately loose: the browser would otherwise truncate a
+             pasted " abcd " to 4 characters *including* the space, losing the last
+             one before the script gets to strip it. Length is enforced in JS. -->
+        <input type="text" id="join-code" placeholder="Room Code" maxlength="16"
+               autocapitalize="characters" autocomplete="off" autocorrect="off" spellcheck="false">
         <button id="btn-join">Join</button>
+      </div>
+      <button id="btn-settings-lobby" class="btn-settings">⚙ Game Settings</button>
+      <div class="rules-summary"></div>
+    </div>
+
+    <!-- Settings, shared by every screen -->
+    <div id="settings-modal" class="modal hidden">
+      <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <h2 id="settings-title">Game Settings</h2>
+
+        <fieldset class="setting">
+          <legend>Piece numbering</legend>
+          <p class="setting-note">Affects your screen only — your opponent keeps their own choice.</p>
+          <label class="opt">
+            <input type="radio" name="numbering" value="classic">
+            <span><strong>Classic</strong><em>Marshal is 1, Scout is 9, Spy is S</em></span>
+          </label>
+          <label class="opt">
+            <input type="radio" name="numbering" value="modern">
+            <span><strong>Modern</strong><em>Marshal is 10, Scout is 2, Spy is 1</em></span>
+          </label>
+        </fieldset>
+
+        <fieldset class="setting" id="setting-reveal">
+          <legend>Pieces revealed by combat</legend>
+          <p class="setting-note" id="reveal-note"></p>
+          <label class="opt">
+            <input type="radio" name="revealMode" value="permanent">
+            <span><strong>Rest of the game</strong><em>Once a piece fights, its rank stays visible</em></span>
+          </label>
+          <label class="opt">
+            <input type="radio" name="revealMode" value="oneturn">
+            <span><strong>Next turn only</strong><em>Its rank shows for one turn, then hides again</em></span>
+          </label>
+        </fieldset>
+
+        <button id="btn-settings-close">Done</button>
       </div>
     </div>
     
@@ -28,7 +69,9 @@
         <div id="room-code-display">Room: <span></span></div>
         <div id="setup-status">Place your pieces...</div>
         <div id="setup-opponent-status" class="opponent-status hidden"></div>
+        <button id="btn-settings-setup" class="btn-settings" title="Game settings">⚙</button>
       </div>
+      <div class="rules-summary"></div>
       <div class="game-area">
         <div class="board-container">
           <div id="setup-board" class="board"></div>
@@ -80,10 +123,12 @@
             </div>
           </div>
           <div class="reveal-legend">
-            <span class="legend-swatch"></span> White ring = your opponent has seen this piece
+            <span class="legend-swatch"></span> White ring = your opponent can see this piece
+            <div class="rules-summary"></div>
           </div>
           <div style="flex:1;"></div>
           <div class="game-controls">
+            <button id="btn-settings-play" class="btn-settings">⚙ Settings</button>
             <button id="btn-resign" style="width: 100%; background: var(--accent-red);">Resign</button>
             <button id="btn-end-room-play" class="btn-end-room hidden">Close Room</button>
           </div>

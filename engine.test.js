@@ -35,8 +35,27 @@ function mockGameState() {
     reason: null,
     history: { south: [], north: [] },
     lastMove: null,
-    gameOver: false
+    gameOver: false,
+    ply: 0,
+    fullReveal: false
   };
+}
+
+// Sets up a Marshal(10) that wins a fight and is therefore exposed, plus a
+// spare piece on each side so both players always have a quiet move available.
+function stateWithExposedMarshal() {
+  const state = mockGameState();
+  state.board[6][0] = { rank: 10, owner: "south", revealed: false, id: 1 };
+  state.board[5][0] = { rank: 4, owner: "north", revealed: false, id: 2 };
+  state.board[0][9] = { rank: 6, owner: "north", revealed: false, id: 3 };
+  state.board[9][9] = { rank: 6, owner: "south", revealed: false, id: 4 };
+  applyMove(state, "south", [6, 0], [5, 0]); // Marshal takes the Sergeant and is exposed
+  return state;
+}
+
+function enemySees(state, cell, settings) {
+  const view = redactView(state, "north", settings);
+  return view.board[cell[0]][cell[1]].rank !== undefined;
 }
 
 test('1. validateSetup', (t) => {
@@ -203,4 +222,70 @@ test('7. checkGameOver', (t) => {
   assert.strictEqual(gameOverStatus.over, true);
   assert.strictEqual(gameOverStatus.winner, "north");
   assert.strictEqual(gameOverStatus.reason, "no-moves");
+});
+
+test('8. revealMode "permanent" keeps a fought piece exposed for the rest of the game', (t) => {
+  const state = stateWithExposedMarshal();
+  const settings = { revealMode: "permanent" };
+
+  assert.strictEqual(enemySees(state, [5, 0], settings), true, "exposed right after the battle");
+
+  applyMove(state, "north", [0, 9], [1, 9]);
+  applyMove(state, "south", [9, 9], [8, 9]);
+  applyMove(state, "north", [1, 9], [2, 9]);
+  assert.strictEqual(enemySees(state, [5, 0], settings), true, "still exposed several turns later");
+});
+
+test('9. revealMode "oneturn" exposes a fought piece for exactly one opposing turn', (t) => {
+  const state = stateWithExposedMarshal();
+  const settings = { revealMode: "oneturn" };
+
+  // It is now north's turn, and this is the turn they get to see the Marshal.
+  assert.strictEqual(state.turn, "north");
+  assert.strictEqual(enemySees(state, [5, 0], settings), true, "visible during the turn after the battle");
+
+  applyMove(state, "north", [0, 9], [1, 9]);
+  assert.strictEqual(enemySees(state, [5, 0], settings), false, "goes dark once that turn is used");
+
+  applyMove(state, "south", [9, 9], [8, 9]);
+  applyMove(state, "north", [1, 9], [2, 9]);
+  assert.strictEqual(enemySees(state, [5, 0], settings), false, "stays dark afterwards");
+});
+
+test('10. the owner\'s "they can see this" flag tracks live exposure, not history', (t) => {
+  const state = stateWithExposedMarshal();
+  const oneturn = { revealMode: "oneturn" };
+  const own = () => redactView(state, "south", oneturn).board[5][0];
+
+  assert.strictEqual(own().revealed, true, "owner is warned while the piece is exposed");
+  applyMove(state, "north", [0, 9], [1, 9]);
+  assert.strictEqual(own().revealed, false, "warning clears when the exposure lapses");
+
+  // Under permanent reveals the same piece stays flagged.
+  assert.strictEqual(
+    redactView(state, "south", { revealMode: "permanent" }).board[5][0].revealed, true);
+});
+
+test('11. fullReveal overrides per-turn expiry so the final board can be reviewed', (t) => {
+  const state = stateWithExposedMarshal();
+  const settings = { revealMode: "oneturn" };
+  applyMove(state, "north", [0, 9], [1, 9]);
+  assert.strictEqual(enemySees(state, [5, 0], settings), false);
+
+  state.fullReveal = true;
+  assert.strictEqual(enemySees(state, [5, 0], settings), true, "review board shows everything");
+});
+
+test('12. redactView defaults to permanent reveals when given no settings', (t) => {
+  const state = stateWithExposedMarshal();
+  applyMove(state, "north", [0, 9], [1, 9]);
+  applyMove(state, "south", [9, 9], [8, 9]);
+  assert.strictEqual(redactView(state, "north").board[5][0].rank, 10);
+});
+
+test('13. an unrevealed piece is never exposed under either mode', (t) => {
+  const state = stateWithExposedMarshal();
+  // [9][9] is south's spare, which has never fought; north must not see its rank.
+  assert.strictEqual(enemySees(state, [9, 9], { revealMode: "oneturn" }), false);
+  assert.strictEqual(enemySees(state, [9, 9], { revealMode: "permanent" }), false);
 });

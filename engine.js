@@ -89,7 +89,9 @@ function createGame(setupSouth, setupNorth) {
     reason: null,
     history: { south: [], north: [] },
     lastMove: null,
-    gameOver: false
+    gameOver: false,
+    ply: 0,           // moves applied so far; drives per-turn reveal expiry
+    fullReveal: false // set once the game ends so the final board can be reviewed
   };
 }
 
@@ -217,8 +219,12 @@ function applyMove(gameState, color, from, to) {
     gameState.board[tr][tc] = attacker;
     gameState.board[fr][fc] = null;
   } else {
+    // Stamp *when* each piece was exposed, so a room using per-turn reveals can
+    // let the exposure lapse. Under permanent reveals the stamp is simply unused.
     attacker.revealed = true;
+    attacker.revealedPly = gameState.ply || 0;
     defender.revealed = true;
+    defender.revealedPly = gameState.ply || 0;
 
     let outcome;
     let defenderDied = false;
@@ -273,6 +279,8 @@ function applyMove(gameState, color, from, to) {
     }
   }
 
+  gameState.ply = (gameState.ply || 0) + 1;
+
   if (!gameState.gameOver) {
     gameState.turn = color === "south" ? "north" : "south";
     const overCheck = checkGameOver(gameState);
@@ -296,7 +304,21 @@ function applyMove(gameState, color, from, to) {
   };
 }
 
-function redactView(gameState, color) {
+// Is this piece's rank currently visible to the player who doesn't own it?
+//
+// Under 'oneturn', a piece exposed by a battle on ply P is shown only while
+// ply - P <= 1 — that is, for exactly the one turn its opponent takes next.
+// From the following ply onward it goes dark again.
+function isExposed(gameState, piece, revealMode) {
+  if (!piece.revealed) return false;
+  if (gameState.fullReveal) return true;
+  if (revealMode !== "oneturn") return true;
+  if (typeof piece.revealedPly !== "number") return true;
+  return (gameState.ply || 0) - piece.revealedPly <= 1;
+}
+
+function redactView(gameState, color, settings) {
+  const revealMode = (settings && settings.revealMode) || "permanent";
   const board = [];
   for (let r = 0; r < 10; r++) {
     const row = [];
@@ -308,11 +330,15 @@ function redactView(gameState, color) {
         if (!piece) {
           row.push(null);
         } else {
+          // `revealed` is reported as *current* exposure, not "has ever fought",
+          // so the owner's "they can see this piece" marker stays truthful and
+          // clears by itself when a per-turn exposure lapses.
+          const exposed = isExposed(gameState, piece, revealMode);
           if (piece.owner === color) {
-            row.push({ own: true, rank: piece.rank, revealed: piece.revealed, id: piece.id });
+            row.push({ own: true, rank: piece.rank, revealed: exposed, id: piece.id });
           } else {
-            const redactedPiece = { own: false, revealed: piece.revealed, id: piece.id };
-            if (piece.revealed) {
+            const redactedPiece = { own: false, revealed: exposed, id: piece.id };
+            if (exposed) {
               redactedPiece.rank = piece.rank;
             }
             row.push(redactedPiece);

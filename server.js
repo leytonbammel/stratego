@@ -18,6 +18,27 @@ app.use(express.static('public', {
 
 const rooms = new Map();
 
+// Room codes are drawn from an unambiguous uppercase alphabet, so accept whatever
+// the player typed — any case, with stray spaces or punctuation from a phone
+// keyboard's autocorrect — and normalize it to the canonical form.
+function normalizeRoomCode(raw) {
+  return String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+}
+
+// Room rules chosen by the host when the room is created.
+//   revealMode 'permanent' — a piece that has fought stays face-up for the rest
+//                            of the game (standard behaviour).
+//   revealMode 'oneturn'   — it is only shown to the opponent for their single
+//                            next turn, then goes dark again.
+const DEFAULT_SETTINGS = { revealMode: 'permanent' };
+const REVEAL_MODES = ['permanent', 'oneturn'];
+
+function sanitizeSettings(raw) {
+  const s = { ...DEFAULT_SETTINGS };
+  if (raw && REVEAL_MODES.includes(raw.revealMode)) s.revealMode = raw.revealMode;
+  return s;
+}
+
 function generateRoomCode() {
   const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
   let code;
@@ -40,11 +61,15 @@ function sendTo(ws, message) {
   }
 }
 
+// Deliver to any socket that is actually open. We deliberately do NOT gate on the
+// `connected` bookkeeping flag: if a player's socket is open they must receive the
+// game, even if our bookkeeping is momentarily wrong. `connected` drives the
+// "opponent dropped" banner only.
 function broadcastToRoom(room, message) {
   const msgStr = JSON.stringify(message);
   ['south', 'north'].forEach(color => {
     const p = room.players[color];
-    if (p && p.ws && p.connected && p.ws.readyState === 1) {
+    if (p && p.ws && p.ws.readyState === 1) {
       p.ws.send(msgStr);
     }
   });
@@ -55,7 +80,7 @@ function broadcastToRoom(room, message) {
 function stateMessage(room, color) {
   return {
     type: 'state',
-    view: engine.redactView(room.gameState, color),
+    view: engine.redactView(room.gameState, color, room.settings),
     captured: room.captured || []
   };
 }
@@ -64,9 +89,7 @@ function sendStateToBoth(room) {
   if (!room.gameState) return;
   ['south', 'north'].forEach(color => {
     const p = room.players[color];
-    if (p && p.connected) {
-      sendTo(p.ws, stateMessage(room, color));
-    }
+    if (p) sendTo(p.ws, stateMessage(room, color)); // sendTo already checks readyState
   });
 }
 
@@ -107,6 +130,8 @@ function sendSetupStatus(room) {
 // and push the state again. This is what lets both players review the final board.
 function revealAllAndSend(room) {
   if (!room.gameState) return;
+  // Overrides any per-turn reveal expiry — the review board shows everything.
+  room.gameState.fullReveal = true;
   for (let r = 0; r < 10; r++) {
     for (let c = 0; c < 10; c++) {
       const piece = room.gameState.board[r][c];
@@ -126,6 +151,10 @@ wss.on('connection', (ws) => {
   let wsRoomCode = null;
   let wsColor = null;
 
+  // Heartbeat bookkeeping — see the sweep below.
+  ws.isAlive = true;
+  ws.on('pong', () => { ws.isAlive = true; });
+
   ws.on('message', (messageRaw) => {
     let msg;
     try {
@@ -135,6 +164,13 @@ wss.on('connection', (ws) => {
     }
 
     const { type } = msg;
+
+    // Application-level heartbeat. Protocol ping frames keep the connection warm
+    // through proxies, but a browser can't observe them, so the client needs its
+    // own round trip to tell "quiet game" apart from "dead socket".
+    if (type === 'ping') {
+      return sendTo(ws, { type: 'pong' });
+    }
 
     if (type === 'create') {
       const code = generateRoomCode();
@@ -148,20 +184,22 @@ wss.on('connection', (ws) => {
         gameState: null,
         chat: [],
         captured: [],
+        settings: sanitizeSettings(msg.settings),
         phase: 'waiting',
         lastActivity: Date.now()
       };
       rooms.set(code, room);
       wsRoomCode = code;
       wsColor = 'south';
-      
+
       sendTo(ws, { type: 'created', roomCode: code, color: 'south', token });
+      sendTo(ws, { type: 'settings', settings: room.settings });
       sendTo(ws, { type: 'phase', phase: 'waiting' });
       return;
     }
 
     if (type === 'join') {
-      const code = (msg.roomCode || '').toUpperCase();
+      const code = normalizeRoomCode(msg.roomCode);
       const room = rooms.get(code);
       if (!room) {
         return sendTo(ws, { type: 'error', message: 'Room not found.' });
@@ -177,7 +215,8 @@ wss.on('connection', (ws) => {
       room.lastActivity = Date.now();
       
       sendTo(ws, { type: 'joined', roomCode: code, color: 'north', token });
-      
+      sendTo(ws, { type: 'settings', settings: room.settings });
+
       const pSouth = room.players.south;
       if (pSouth && pSouth.connected) {
         sendTo(pSouth.ws, { type: 'opponent', status: 'joined' });
@@ -189,7 +228,7 @@ wss.on('connection', (ws) => {
     }
 
     if (type === 'reconnect') {
-      const code = (msg.roomCode || '').toUpperCase();
+      const code = normalizeRoomCode(msg.roomCode);
       const token = msg.token;
       const room = rooms.get(code);
       if (!room) {
@@ -205,18 +244,28 @@ wss.on('connection', (ws) => {
       }
       
       const p = room.players[color];
+      // Retire the socket this one replaces, so we never leave an orphan open.
+      // Its close handler is a no-op now that p.ws points elsewhere.
+      const previous = p.ws;
       p.ws = ws;
       p.connected = true;
+      if (previous && previous !== ws && previous.readyState === 1) {
+        previous.close(1000, 'superseded by reconnect');
+      }
       wsRoomCode = code;
       wsColor = color;
       room.lastActivity = Date.now();
-      
+
       const oppColor = color === 'south' ? 'north' : 'south';
       const opp = room.players[oppColor];
       if (opp && opp.connected) {
         sendTo(opp.ws, { type: 'opponent', status: 'reconnected' });
       }
-      
+      // Tell the returning player where their opponent stands, so a player who
+      // reloads mid-game isn't left guessing whether the other side is still there.
+      sendTo(ws, { type: 'opponent', status: opp && opp.connected ? 'reconnected' : 'left', quiet: true });
+
+      sendTo(ws, { type: 'settings', settings: room.settings });
       sendTo(ws, { type: 'phase', phase: room.phase });
       if (room.phase === 'setup' || room.phase === 'waiting') {
         sendSetupStatus(room);
@@ -301,6 +350,20 @@ wss.on('connection', (ws) => {
       return;
     }
 
+    // The host may still adjust the rules while the room is being set up; once
+    // pieces are moving the rules are locked for the rest of the game.
+    if (type === 'settings') {
+      if (wsColor !== 'south') {
+        return sendTo(ws, { type: 'error', message: 'Only the host can change the rules.' });
+      }
+      if (room.phase !== 'waiting' && room.phase !== 'setup') {
+        return sendTo(ws, { type: 'error', message: 'Rules are locked once the game starts.' });
+      }
+      room.settings = sanitizeSettings(msg.settings);
+      broadcastToRoom(room, { type: 'settings', settings: room.settings });
+      return;
+    }
+
     if (type === 'chat') {
       const text = msg.text;
       if (typeof text !== 'string') return;
@@ -366,12 +429,20 @@ wss.on('connection', (ws) => {
     if (!wsRoomCode || !wsColor) return;
     const room = rooms.get(wsRoomCode);
     if (!room) return;
-    
+
     const player = room.players[wsColor];
-    if (player) {
-      player.connected = false;
-    }
-    
+    if (!player) return;
+
+    // A socket that has already been superseded by a reconnect must NOT mark the
+    // player offline. When a network blips, the client notices within milliseconds
+    // and reconnects on a fresh socket, but the OS can take many seconds to report
+    // the old half-open socket as closed — so this handler routinely runs *after*
+    // the player is already back. Without this guard the late close silently muted
+    // a live player (no state, no moves, no chat) until they reloaded the page.
+    if (player.ws !== ws) return;
+
+    player.connected = false;
+
     const oppColor = wsColor === 'south' ? 'north' : 'south';
     const opp = room.players[oppColor];
     if (opp && opp.connected) {
@@ -383,6 +454,23 @@ wss.on('connection', (ws) => {
     }
   });
 });
+
+// Stratego turns can be slow, and a socket with nothing on it gets culled by
+// proxies and mobile NAT tables after ~60s. Pinging every 25s keeps the
+// connection warm and, just as importantly, detects sockets that have died
+// without a FIN — otherwise a player sits on a dead connection believing the
+// game is merely quiet.
+const HEARTBEAT_MS = 25000;
+setInterval(() => {
+  wss.clients.forEach((ws) => {
+    if (ws.isAlive === false) {
+      ws.terminate(); // missed two rounds; fires 'close' so the player is marked offline
+      return;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  });
+}, HEARTBEAT_MS);
 
 setInterval(() => {
   const now = Date.now();

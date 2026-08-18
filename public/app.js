@@ -1,8 +1,18 @@
 const wsUrl = (location.protocol === 'https:' ? 'wss' : 'ws') + '://' + location.host;
-let ws;
+let ws = null;
 let reconnectBackoff = 1000;
+let reconnectTimer = null;
 let outbox = [];          // messages queued while the socket isn't OPEN yet
 let connReady = false;
+
+// Heartbeat. A WebSocket can die without the browser noticing — the phone sleeps,
+// wifi hands over to cellular, a proxy culls an idle connection during a long
+// turn — and readyState happily still reports OPEN. Without a round trip of our
+// own we'd sit on a dead socket thinking the opponent was just slow.
+const HEARTBEAT_MS = 20000;
+const PONG_GRACE_MS = 8000;
+let heartbeatTimer = null;
+let awaitingPong = false;
 
 // Always send through this helper: it sends immediately when the socket is open,
 // otherwise queues the message and flushes it once the connection is (re)established.
@@ -10,12 +20,11 @@ function send(obj) {
   const data = JSON.stringify(obj);
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(data);
-  } else {
-    outbox.push(data);
-    setConnStatus(false);
-    // if the socket is fully closed, kick off a fresh connection right away
-    if (!ws || ws.readyState === WebSocket.CLOSED) initWebSocket();
+    return;
   }
+  outbox.push(data);
+  setConnStatus(false);
+  ensureConnected();
 }
 
 function setConnStatus(online) {
@@ -58,16 +67,117 @@ const RANKS = {
 };
 const RANK_ORDER = ['10', '9', '8', '7', '6', '5', '4', '3', '2', '1', 'B', 'F'];
 
-// Display only: classic numbering counts up as rank falls (Marshal 1 ... Scout 9, Spy S).
-// Internal ranks stay 10-high so all engine comparisons are untouched.
-const RANK_LABELS = {
-  '10': '1', '9': '2', '8': '3', '7': '4', '6': '5',
-  '5': '6', '4': '7', '3': '8', '2': '9', '1': 'S',
-  'B': 'B', 'F': 'F'
+// Display only — internal ranks stay 10-high so every engine comparison is untouched.
+// Classic counts up as rank falls (Marshal 1 … Scout 9, Spy S); modern shows the
+// internal strength directly (Marshal 10 … Spy 1).
+const NUMBERING_LABELS = {
+  classic: {
+    '10': '1', '9': '2', '8': '3', '7': '4', '6': '5',
+    '5': '6', '4': '7', '3': '8', '2': '9', '1': 'S',
+    'B': 'B', 'F': 'F'
+  },
+  modern: {
+    '10': '10', '9': '9', '8': '8', '7': '7', '6': '6',
+    '5': '5', '4': '4', '3': '3', '2': '2', '1': '1',
+    'B': 'B', 'F': 'F'
+  }
 };
+
+// Which numbering *you* read the board in. Purely cosmetic, so it is a personal
+// preference rather than a room rule — the two players may differ.
+let numbering = localStorage.getItem('numbering') === 'modern' ? 'modern' : 'classic';
+
+// Room rules. Owned by the host and pushed by the server once a room exists;
+// until then this holds the host's remembered preference for the next room.
+let roomSettings = {
+  revealMode: localStorage.getItem('revealMode') === 'oneturn' ? 'oneturn' : 'permanent'
+};
+
 function rankLabel(rank) {
   const key = String(rank);
-  return RANK_LABELS[key] || key;
+  return NUMBERING_LABELS[numbering][key] || key;
+}
+
+// Modern numbering has one two-character label ("10"); it gets a narrower
+// treatment so it still fits the same badge as every other rank.
+function rankSpan(rank) {
+  const label = rankLabel(rank);
+  return `<span class="p-rank${label.length > 1 ? ' wide' : ''}">${label}</span>`;
+}
+
+/* ---------------------------------------------------------------- settings */
+
+// Numbering is yours alone; the reveal rule belongs to the room, so only the
+// host may set it, and only before pieces start moving.
+function canEditRules() {
+  const beforePlay = phase === 'lobby' || phase === 'waiting' || phase === 'setup';
+  return !roomCode || (myColor === 'south' && beforePlay);
+}
+
+function describeNumbering() {
+  return numbering === 'modern' ? 'Modern (10 → 1)' : 'Classic (1 → 9, S)';
+}
+
+function describeReveal() {
+  return roomSettings.revealMode === 'oneturn' ? 'next turn only' : 'rest of the game';
+}
+
+function renderRulesSummary() {
+  const text = `Numbering: ${describeNumbering()} · Combat reveals: ${describeReveal()}`;
+  document.querySelectorAll('.rules-summary').forEach(el => { el.textContent = text; });
+}
+
+function syncSettingsForm() {
+  document.querySelectorAll('input[name="numbering"]').forEach(i => {
+    i.checked = i.value === numbering;
+  });
+
+  const editable = canEditRules();
+  document.querySelectorAll('input[name="revealMode"]').forEach(i => {
+    i.checked = i.value === roomSettings.revealMode;
+    i.disabled = !editable;
+  });
+
+  const group = document.getElementById('setting-reveal');
+  if (group) group.classList.toggle('locked', !editable);
+
+  const note = document.getElementById('reveal-note');
+  if (note) {
+    if (editable) {
+      note.textContent = 'A room rule — applies to both players.';
+    } else if (myColor !== 'south') {
+      note.textContent = 'Chosen by the host for this room.';
+    } else {
+      note.textContent = 'Locked once the game is under way.';
+    }
+  }
+  renderRulesSummary();
+}
+
+// Re-label everything on screen. Only display strings change; no game state moves.
+function applyNumbering(next) {
+  numbering = next === 'modern' ? 'modern' : 'classic';
+  localStorage.setItem('numbering', numbering);
+  if (setupBoard.length) { renderSetupBoard(); renderTray(); }
+  if (gameState && (phase === 'play' || phase === 'gameover')) renderPlayBoard();
+  renderCaptured();
+  renderRulesSummary();
+}
+
+function applyRevealMode(mode) {
+  roomSettings = { ...roomSettings, revealMode: mode === 'oneturn' ? 'oneturn' : 'permanent' };
+  localStorage.setItem('revealMode', roomSettings.revealMode); // default for the next room
+  if (roomCode) send({ type: 'settings', settings: roomSettings });
+  syncSettingsForm();
+}
+
+function openSettings() {
+  syncSettingsForm();
+  document.getElementById('settings-modal').classList.remove('hidden');
+}
+
+function closeSettings() {
+  document.getElementById('settings-modal').classList.add('hidden');
 }
 
 const screens = ['lobby', 'setup', 'play'];
@@ -76,33 +186,105 @@ function showScreen(name) {
   document.getElementById(name + '-screen').classList.add('active');
 }
 
+function startHeartbeat() {
+  stopHeartbeat();
+  heartbeatTimer = setInterval(() => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    if (awaitingPong) {
+      // Last ping went unanswered: the socket is dead however OPEN it claims to
+      // be. Close it so onclose runs and we reconnect on a fresh one.
+      awaitingPong = false;
+      ws.close();
+      return;
+    }
+    awaitingPong = true;
+    ws.send(JSON.stringify({ type: 'ping' }));
+  }, HEARTBEAT_MS);
+}
+
+function stopHeartbeat() {
+  if (heartbeatTimer) clearInterval(heartbeatTimer);
+  heartbeatTimer = null;
+  awaitingPong = false;
+}
+
+function scheduleReconnect() {
+  if (reconnectTimer) return; // exactly one attempt in flight, never a pile-up
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    initWebSocket();
+  }, reconnectBackoff);
+  reconnectBackoff = Math.min(reconnectBackoff * 2, 15000);
+}
+
+// The single entry point for getting a socket. Opening a second one while the
+// first is alive used to be possible, and the loser's later close event would
+// take the live player's connection down with it.
 function initWebSocket() {
-  ws = new WebSocket(wsUrl);
-  
-  ws.onopen = () => {
+  if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+  if (ws && (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)) return;
+
+  const sock = new WebSocket(wsUrl);
+  ws = sock;
+
+  sock.onopen = () => {
+    if (ws !== sock) return sock.close(); // superseded before it finished opening
     reconnectBackoff = 1000;
     setConnStatus(true);
+    startHeartbeat();
     if (token && roomCode) {
-      ws.send(JSON.stringify({ type: 'reconnect', roomCode, token }));
+      sock.send(JSON.stringify({ type: 'reconnect', roomCode, token }));
     }
     // flush anything the user tried to do before the socket was ready
     const queued = outbox;
     outbox = [];
-    queued.forEach((d) => ws.send(d));
+    queued.forEach((d) => sock.send(d));
   };
 
-  ws.onmessage = (e) => {
-    const msg = JSON.parse(e.data);
+  sock.onmessage = (e) => {
+    if (ws !== sock) return; // ignore anything from a socket we've moved on from
+    let msg;
+    try {
+      msg = JSON.parse(e.data);
+    } catch (err) {
+      return;
+    }
+    if (msg.type === 'pong') { awaitingPong = false; return; }
     handleMessage(msg);
   };
 
-  ws.onerror = () => setConnStatus(false);
+  sock.onerror = () => { if (ws === sock) setConnStatus(false); };
 
-  ws.onclose = () => {
+  sock.onclose = () => {
+    if (ws !== sock) return; // a retired socket closing is expected, not a drop
+    stopHeartbeat();
     setConnStatus(false);
-    setTimeout(initWebSocket, reconnectBackoff);
-    reconnectBackoff = Math.min(reconnectBackoff * 2, 30000);
+    scheduleReconnect();
   };
+}
+
+// Called whenever the device may have been asleep or offline. A socket that
+// looks OPEN after a wake is often already dead, so prove it with a ping
+// instead of trusting readyState.
+function ensureConnected() {
+  if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) {
+    reconnectBackoff = 1000;
+    initWebSocket();
+    return;
+  }
+  if (ws.readyState !== WebSocket.OPEN) return;
+
+  const sock = ws;
+  awaitingPong = true;
+  try {
+    sock.send(JSON.stringify({ type: 'ping' }));
+  } catch (err) {
+    sock.close();
+    return;
+  }
+  setTimeout(() => {
+    if (awaitingPong && ws === sock && sock.readyState === WebSocket.OPEN) sock.close();
+  }, PONG_GRACE_MS);
 }
 
 // The "Close Room" control belongs to the host (south) only.
@@ -142,6 +324,11 @@ function resetToLobby() {
   hideGameOver();
   capturedList = [];
   renderCaptured();
+  // Back to your own remembered rule preference for the next room you host.
+  roomSettings = {
+    revealMode: localStorage.getItem('revealMode') === 'oneturn' ? 'oneturn' : 'permanent'
+  };
+  syncSettingsForm();
   document.getElementById('join-code').value = '';
   updateHostControls();
   showScreen('lobby');
@@ -164,8 +351,13 @@ function handleMessage(msg) {
       resetToLobby();
       showToast(myColor === 'south' ? 'Room closed.' : 'The host closed the room.');
       break;
+    case 'settings':
+      if (msg.settings) roomSettings = msg.settings;
+      syncSettingsForm();
+      break;
     case 'phase':
       phase = msg.phase;
+      syncSettingsForm(); // rules lock as soon as play begins
       if (phase === 'waiting' || phase === 'setup') {
         if (!setupInitialized) { initSetup(); setupInitialized = true; }
         capturedList = [];      // fresh board on a rematch
@@ -226,13 +418,16 @@ function handleMessage(msg) {
       appendChat(msg.from, msg.text);
       break;
     case 'opponent':
+      // `quiet` marks the status echo we get on our own reconnect: update the
+      // banner, but don't announce news the player didn't just miss.
       if (msg.status === 'left') {
         setOpponentOnline(false, 'Opponent disconnected — waiting for them to reconnect…');
-        showToast('Your opponent disconnected.', true);
+        if (!msg.quiet) showToast('Your opponent disconnected.', true);
       } else {
-        const back = msg.status === 'joined' ? 'Opponent joined.' : 'Opponent reconnected.';
         setOpponentOnline(true);
-        showToast(back);
+        if (!msg.quiet) {
+          showToast(msg.status === 'joined' ? 'Opponent joined.' : 'Opponent reconnected.');
+        }
       }
       break;
     case 'error':
@@ -421,7 +616,7 @@ function renderSetupBoard() {
         let pDiv = document.createElement('div');
         pDiv.className = 'piece own';
         let shortName = RANKS[piece] ? RANKS[piece].name.substring(0,3) : piece;
-        pDiv.innerHTML = `<span class="p-rank">${rankLabel(piece)}</span><span class="p-name">${shortName}</span>`;
+        pDiv.innerHTML = `${rankSpan(piece)}<span class="p-name">${shortName}</span>`;
         cellDiv.appendChild(pDiv);
       }
       
@@ -440,7 +635,7 @@ function renderTray() {
     div.className = 'tray-item' + (selectedTrayRank === rank ? ' selected' : '') + (count === 0 ? ' empty' : '');
     div.innerHTML = `
       <div class="tray-piece">
-        <span class="p-rank">${rankLabel(rank)}</span>
+        ${rankSpan(rank)}
       </div>
       <div class="tray-count">x${count}</div>
     `;
@@ -580,7 +775,7 @@ function renderPlayBoard() {
         if (cellData.own || cellData.revealed) {
            let rankStr = String(cellData.rank);
            let shortName = RANKS[rankStr] ? RANKS[rankStr].name.substring(0,3) : rankStr;
-           pieceDiv.innerHTML = `<span class="p-rank">${rankLabel(rankStr)}</span><span class="p-name">${shortName}</span>`;
+           pieceDiv.innerHTML = `${rankSpan(rankStr)}<span class="p-name">${shortName}</span>`;
         } else {
            pieceDiv.classList.add('unrevealed');
         }
@@ -664,19 +859,60 @@ function updateGameStatus() {
   document.getElementById('captured-enemy').textContent = `${enemyPieces} left`;
 }
 
+// Room codes use an unambiguous uppercase alphabet, so accept any case and drop
+// the spaces and punctuation a phone keyboard likes to add.
+function normalizeRoomCode(raw) {
+  return String(raw || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 4);
+}
+
 document.addEventListener('DOMContentLoaded', () => {
   initWebSocket();
-  
+  syncSettingsForm();
+
   document.getElementById('btn-create').onclick = () => {
-    send({ type: 'create' });
+    send({ type: 'create', settings: { revealMode: roomSettings.revealMode } });
   };
-  document.getElementById('btn-join').onclick = () => {
-    let code = document.getElementById('join-code').value.trim().toUpperCase();
-    if (code) {
-      send({ type: 'join', roomCode: code });
-    }
+
+  const joinInput = document.getElementById('join-code');
+  const doJoin = () => {
+    const code = normalizeRoomCode(joinInput.value);
+    if (code) send({ type: 'join', roomCode: code });
   };
-  
+  document.getElementById('btn-join').onclick = doJoin;
+  // Normalize as they type, so the field always shows the code as the server reads it.
+  joinInput.addEventListener('input', () => {
+    const cleaned = normalizeRoomCode(joinInput.value);
+    if (cleaned !== joinInput.value) joinInput.value = cleaned;
+  });
+  joinInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); doJoin(); }
+  });
+
+  ['btn-settings-lobby', 'btn-settings-setup', 'btn-settings-play'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.onclick = openSettings;
+  });
+  document.getElementById('btn-settings-close').onclick = closeSettings;
+  document.getElementById('settings-modal').addEventListener('click', (e) => {
+    if (e.target.id === 'settings-modal') closeSettings(); // click the backdrop to dismiss
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closeSettings();
+  });
+  document.querySelectorAll('input[name="numbering"]').forEach(input => {
+    input.addEventListener('change', () => { if (input.checked) applyNumbering(input.value); });
+  });
+  document.querySelectorAll('input[name="revealMode"]').forEach(input => {
+    input.addEventListener('change', () => { if (input.checked) applyRevealMode(input.value); });
+  });
+
+  // Coming back from a locked phone or a dropped network is exactly when the
+  // socket is most likely to be quietly dead — check it rather than wait.
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) ensureConnected(); });
+  window.addEventListener('online', ensureConnected);
+  window.addEventListener('focus', ensureConnected);
+
+
   document.getElementById('btn-autofill').onclick = autoFill;
   document.getElementById('btn-clear').onclick = clearSetup;
   document.getElementById('btn-ready').onclick = readySetup;
