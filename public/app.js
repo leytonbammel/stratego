@@ -405,7 +405,9 @@ function handleMessage(msg) {
       if (msg.youReady) {
         document.getElementById('setup-status').textContent = msg.opponentReady ? 'Both ready! Starting...' : 'Waiting for opponent...';
       } else {
-        document.getElementById('setup-status').textContent = msg.opponentPresent ? 'Opponent joined. Place your pieces!' : 'Waiting for opponent to join...';
+        document.getElementById('setup-status').textContent =
+          msg.opponentIsBot ? 'Playing the computer. Place your pieces!'
+          : msg.opponentPresent ? 'Opponent joined. Place your pieces!' : 'Waiting for opponent to join...';
       }
       break;
     case 'battle':
@@ -871,6 +873,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   document.getElementById('btn-create').onclick = () => {
     send({ type: 'create', settings: { revealMode: roomSettings.revealMode } });
+  };
+  document.getElementById('btn-vs-bot').onclick = () => {
+    send({ type: 'create', vsBot: true, settings: { revealMode: roomSettings.revealMode } });
   };
 
   const joinInput = document.getElementById('join-code');

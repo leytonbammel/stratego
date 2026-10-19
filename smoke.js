@@ -1,5 +1,6 @@
 // Headless end-to-end smoke test: spawns the server, connects two ws clients,
-// runs create/join/setup/move and asserts redaction + turn handling.
+// runs create/join/setup/move and asserts redaction + turn handling, then plays
+// a vs-Computer room against the bot.
 // Run: node smoke.js   (exits 0 on pass, 1 on fail)
 const { spawn } = require('child_process');
 const WebSocket = require('ws');
@@ -51,7 +52,7 @@ function connect() {
 }
 
 (async () => {
-  server = spawn('node', ['server.js'], { env: { ...process.env, PORT: String(PORT) }, stdio: 'inherit' });
+  server = spawn('node', ['server.js'], { env: { ...process.env, PORT: String(PORT), BOT_THINK_MS: '150' }, stdio: 'inherit' });
   await new Promise((r) => setTimeout(r, 1200));
 
   const a = await connect(); // host -> south
@@ -94,6 +95,52 @@ function connect() {
   if (!(moved && moved.own === true)) fail('south piece did not land on [5,0]');
   if (stateA2.view.board[6][0] !== null) fail('[6,0] should be empty after move');
 
-  console.log('SMOKE PASS: create/join/setup/redaction/move all OK');
+  // ---- vs Computer ----
+  const c = await connect();
+  c.send2({ type: 'create', vsBot: true });
+  const botRoom = await c.next('created');
+  if (!botRoom.vsBot) fail('created should echo vsBot');
+  const botPhase = await c.next('phase');
+  if (botPhase.phase !== 'setup') fail('bot room should start in setup, got ' + botPhase.phase);
+  const botStatus = await c.next('setupStatus');
+  if (!botStatus.opponentPresent || !botStatus.opponentReady) fail('bot should be present and ready');
+
+  // The bot seat can't be taken by joining, or claimed with a missing token.
+  const d = await connect();
+  d.send2({ type: 'join', roomCode: botRoom.roomCode });
+  if (!/full/i.test((await d.next('error')).message)) fail('joining a bot room should report it full');
+  d.send2({ type: 'reconnect', roomCode: botRoom.roomCode, token: null });
+  if (!/token/i.test((await d.next('error')).message)) fail('null token must not claim the bot seat');
+
+  c.send2({ type: 'setup', placement: placement('south') });
+  const botStart = await c.next('state', 6000);
+  if (botStart.view.turn !== 'south') fail('human should move first vs bot');
+
+  c.send2({ type: 'move', from: [6, 0], to: [5, 0] });
+  const afterHuman = await c.next('state');
+  if (afterHuman.view.turn !== 'north') fail('turn should pass to the bot');
+  const afterBot = await c.next('state', 3000);
+  if (afterBot.view.turn !== 'south') fail('bot did not move back, turn=' + afterBot.view.turn);
+  if (afterBot.view.lastMove.color !== 'north') fail('last move should be the bot\'s');
+
+  // Resigning while the bot is thinking must leave the bot silent.
+  c.send2({ type: 'move', from: [6, 1], to: [5, 1] });
+  await c.next('state');
+  c.send2({ type: 'resign' });
+  const over = await c.next('gameover');
+  if (over.winner !== 'north' || over.reason !== 'resign') fail('resign should hand the bot the win');
+  await new Promise((r) => setTimeout(r, 400));
+  // The resign sends exactly one state (the final reveal); a late bot move would add more.
+  const lateStates = c.q.filter((m) => m.type === 'state').length;
+  if (lateStates !== 1 || c.q.some((m) => m.type === 'battle')) fail('bot moved after the game ended');
+  c.q = c.q.filter((m) => m.type !== 'state' && m.type !== 'phase');
+
+  c.send2({ type: 'rematch' });
+  const rematchPhase = await c.next('phase');
+  if (rematchPhase.phase !== 'setup') fail('bot should accept a rematch at once');
+  const rematchStatus = await c.next('setupStatus');
+  if (!rematchStatus.opponentReady) fail('bot should be ready again after rematch');
+
+  console.log('SMOKE PASS: create/join/setup/redaction/move and vs-Computer all OK');
   cleanup(0);
 })().catch((e) => fail(e.message));

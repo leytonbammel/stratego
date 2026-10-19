@@ -3,6 +3,7 @@ const http = require('http');
 const { WebSocketServer } = require('ws');
 const crypto = require('crypto');
 const engine = require('./engine');
+const bots = require('./bot');
 
 const app = express();
 const server = http.createServer(app);
@@ -113,7 +114,8 @@ function sendSetupStatus(room) {
       type: 'setupStatus',
       youReady: pSouth.ready,
       opponentReady: pNorth ? pNorth.ready : false,
-      opponentPresent: !!pNorth && pNorth.connected
+      opponentPresent: !!pNorth && pNorth.connected,
+      opponentIsBot: !!(pNorth && pNorth.bot)
     });
   }
   if (pNorth && pNorth.connected) {
@@ -121,7 +123,8 @@ function sendSetupStatus(room) {
       type: 'setupStatus',
       youReady: pNorth.ready,
       opponentReady: pSouth ? pSouth.ready : false,
-      opponentPresent: !!pSouth && pSouth.connected
+      opponentPresent: !!pSouth && pSouth.connected,
+      opponentIsBot: !!(pSouth && pSouth.bot)
     });
   }
 }
@@ -145,6 +148,127 @@ function setPhase(room, phase) {
   room.phase = phase;
   if (room.gameState) room.gameState.phase = phase;
   broadcastToRoom(room, { type: 'phase', phase });
+}
+
+function opponentOf(color) {
+  return color === 'south' ? 'north' : 'south';
+}
+
+// The one path every move takes, whether it came from a socket or a bot.
+function handleMove(room, color, from, to) {
+  if (room.phase !== 'play') return { ok: false, error: 'Not in play phase.' };
+  if (room.gameState.turn !== color) return { ok: false, error: 'Not your turn.' };
+
+  const legality = engine.isLegalMove(room.gameState, color, from, to);
+  if (!legality.ok) return { ok: false, error: legality.error || 'Illegal move.' };
+
+  const result = engine.applyMove(room.gameState, color, from, to);
+  if (result.state) {
+    room.gameState = result.state;
+  }
+
+  recordCaptures(room, result.battle);
+  notifyBots(room, result.battle);
+
+  sendStateToBoth(room);
+
+  if (result.battle) {
+    broadcastToRoom(room, { type: 'battle', battle: result.battle });
+  }
+
+  if (result.gameOver) {
+    setPhase(room, 'gameover');
+    revealAllAndSend(room);
+    broadcastToRoom(room, { type: 'gameover', winner: result.winner, reason: result.reason });
+  } else {
+    const go = engine.checkGameOver(room.gameState);
+    if (go && go.over) {
+      setPhase(room, 'gameover');
+      revealAllAndSend(room);
+      broadcastToRoom(room, { type: 'gameover', winner: go.winner, reason: go.reason });
+    } else {
+      scheduleBotMove(room);
+    }
+  }
+  return { ok: true };
+}
+
+/* ------------------------------------------------------------------- bots */
+
+// A bot seat looks like a player seat, with `bot` holding the bot itself and no
+// socket. It counts as connected, so the human sees an opponent who is present;
+// anything that reacts to a seat's socket must skip it via `p.bot`.
+function createBotSeat(level) {
+  return {
+    token: generateToken(), // never sent anywhere, so the seat can't be claimed by reconnect
+    ws: null,
+    connected: true,
+    placement: null,
+    ready: false,
+    wantsRematch: false,
+    botLevel: level,
+    bot: bots.createBot(level),
+  };
+}
+
+// Called at the start of every game. Each game gets a fresh bot, so nothing the
+// bot remembered about the last game carries over into a rematch.
+function readyBots(room) {
+  ['south', 'north'].forEach(color => {
+    const p = room.players[color];
+    if (p && p.bot) {
+      p.bot = bots.createBot(p.botLevel);
+      p.placement = p.bot.chooseSetup(color);
+      p.ready = true;
+    }
+  });
+}
+
+// Bots learn about each ply the same way humans do: through the redacted view.
+function notifyBots(room, battle) {
+  ['south', 'north'].forEach(color => {
+    const p = room.players[color];
+    if (p && p.bot) p.bot.observe(engine.redactView(room.gameState, color, room.settings), battle);
+  });
+}
+
+// A short pause before each bot move so it feels like an opponent, not a reflex.
+// Tests set BOT_THINK_MS to keep things fast.
+function botThinkMs() {
+  if (process.env.BOT_THINK_MS !== undefined) return Number(process.env.BOT_THINK_MS);
+  return 500 + Math.random() * 500;
+}
+
+function scheduleBotMove(room) {
+  if (room.phase !== 'play' || !room.gameState) return;
+  const color = room.gameState.turn;
+  const p = room.players[color];
+  if (!p || !p.bot) return;
+
+  const game = room.gameState;
+  const ply = game.ply;
+  setTimeout(() => {
+    // While the bot was thinking the room may have closed, the human may have
+    // resigned, or a rematch may have started. Only move in the exact position
+    // the bot was asked about.
+    if (rooms.get(room.code) !== room || room.gameState !== game) return;
+    if (room.phase !== 'play' || game.ply !== ply || game.turn !== color) return;
+
+    const view = engine.redactView(game, color, room.settings);
+    const move = p.bot.chooseMove(view, engine.legalMoves(game, color));
+    if (move) handleMove(room, color, move.from, move.to);
+  }, botThinkMs());
+}
+
+// Both seats are ready once the human readies up, since bots are ready at once.
+function startGameIfReady(room) {
+  const s = room.players.south;
+  const n = room.players.north;
+  if (!(s && s.ready && n && n.ready)) return;
+  room.gameState = engine.createGame(s.placement, n.placement);
+  setPhase(room, 'play');
+  sendStateToBoth(room);
+  scheduleBotMove(room);
 }
 
 wss.on('connection', (ws) => {
@@ -192,9 +316,22 @@ wss.on('connection', (ws) => {
       wsRoomCode = code;
       wsColor = 'south';
 
-      sendTo(ws, { type: 'created', roomCode: code, color: 'south', token });
+      // "Play vs Computer": the bot takes the north seat and is ready at once,
+      // so the room skips waiting and goes straight to setup.
+      const vsBot = !!msg.vsBot;
+      if (vsBot) {
+        room.players.north = createBotSeat('random');
+        readyBots(room);
+      }
+
+      sendTo(ws, { type: 'created', roomCode: code, color: 'south', token, vsBot });
       sendTo(ws, { type: 'settings', settings: room.settings });
-      sendTo(ws, { type: 'phase', phase: 'waiting' });
+      if (vsBot) {
+        setPhase(room, 'setup');
+        sendSetupStatus(room);
+      } else {
+        sendTo(ws, { type: 'phase', phase: 'waiting' });
+      }
       return;
     }
 
@@ -296,56 +433,14 @@ wss.on('connection', (ws) => {
       player.ready = true;
       
       sendSetupStatus(room);
-      
-      const oppColor = wsColor === 'south' ? 'north' : 'south';
-      const opp = room.players[oppColor];
-      
-      if (player.ready && opp && opp.ready) {
-        room.gameState = engine.createGame(room.players.south.placement, room.players.north.placement);
-        setPhase(room, 'play');
-        sendStateToBoth(room);
-      }
+      startGameIfReady(room);
       return;
     }
 
     if (type === 'move') {
-      if (room.phase !== 'play') {
-        return sendTo(ws, { type: 'error', message: 'Not in play phase.' });
-      }
-      if (room.gameState.turn !== wsColor) {
-        return sendTo(ws, { type: 'error', message: 'Not your turn.' });
-      }
-      
-      const { from, to } = msg;
-      const legality = engine.isLegalMove(room.gameState, wsColor, from, to);
-      if (!legality.ok) {
-        return sendTo(ws, { type: 'error', message: legality.error || 'Illegal move.' });
-      }
-      
-      const result = engine.applyMove(room.gameState, wsColor, from, to);
-      if (result.state) {
-        room.gameState = result.state;
-      }
-
-      recordCaptures(room, result.battle);
-
-      sendStateToBoth(room);
-      
-      if (result.battle) {
-        broadcastToRoom(room, { type: 'battle', battle: result.battle });
-      }
-      
-      if (result.gameOver) {
-        setPhase(room, 'gameover');
-        revealAllAndSend(room);
-        broadcastToRoom(room, { type: 'gameover', winner: result.winner, reason: result.reason });
-      } else {
-        const go = engine.checkGameOver(room.gameState);
-        if (go && go.over) {
-           setPhase(room, 'gameover');
-           revealAllAndSend(room);
-           broadcastToRoom(room, { type: 'gameover', winner: go.winner, reason: go.reason });
-        }
+      const outcome = handleMove(room, wsColor, msg.from, msg.to);
+      if (!outcome.ok) {
+        return sendTo(ws, { type: 'error', message: outcome.error });
       }
       return;
     }
@@ -413,11 +508,13 @@ wss.on('connection', (ws) => {
       
       const oppColor = wsColor === 'south' ? 'north' : 'south';
       const opp = room.players[oppColor];
-      if (opp && opp.wantsRematch) {
+      // A bot always agrees to a rematch and sets up again straight away.
+      if (opp && (opp.wantsRematch || opp.bot)) {
         player.wantsRematch = false;
         opp.wantsRematch = false;
         room.gameState = null;
         room.captured = [];
+        if (opp.bot) readyBots(room);
         setPhase(room, 'setup');
         sendSetupStatus(room);
       }
@@ -475,11 +572,13 @@ setInterval(() => {
 setInterval(() => {
   const now = Date.now();
   for (const [code, room] of rooms.entries()) {
+    // A bot seat always reads as connected, so only humans count here; otherwise
+    // a vs-Computer room would live forever after its player left.
     const s = room.players.south;
     const n = room.players.north;
-    const sConn = s && s.connected;
-    const nConn = n && n.connected;
-    
+    const sConn = s && !s.bot && s.connected;
+    const nConn = n && !n.bot && n.connected;
+
     if (!sConn && !nConn) {
       if (now - room.lastActivity > 5 * 60 * 1000) {
         rooms.delete(code);

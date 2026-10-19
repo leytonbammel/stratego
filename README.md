@@ -9,6 +9,8 @@ until they're revealed in battle, so there's no way to peek by inspecting networ
 - Full classic 10×10 Stratego rules: setup phase, all piece ranks, scouts (move + strike at range),
   Spy beats Marshal, Miners defuse Bombs, Flag capture wins, two-squares anti-stall rule.
 - Room codes — one player creates a game, the other joins with the 4-character code.
+- Play vs Computer — a server-side bot takes the other seat (currently a random mover; smarter
+  levels are planned in `bot-options.md`).
 - Private setup: arrange your 40 pieces (drag/tap or Auto-fill), then Ready up.
 - Live play with turn indicator, captured-piece tracker, battle results, resign & rematch.
 - Built-in chat so you can talk while you play.
@@ -35,7 +37,9 @@ CLI). Once deployed you both just open the same URL.
 
 ## Tests
 ```bash
-npm test        # runs engine unit tests via node --test
+npm test        # runs engine and bot unit tests via node --test
+node smoke.js   # end-to-end: two players over WebSockets, then a vs-Computer room
+node bot-match.js 200 random random   # bot-vs-bot results, for comparing bot levels
 ```
 
 ## Rules quick reference
