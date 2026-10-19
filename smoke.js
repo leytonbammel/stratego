@@ -126,6 +126,7 @@ function connect() {
   // Resigning while the bot is thinking must leave the bot silent.
   c.send2({ type: 'move', from: [6, 1], to: [5, 1] });
   await c.next('state');
+  c.q = []; // earlier battles (the bot may have attacked) are not what this checks
   c.send2({ type: 'resign' });
   const over = await c.next('gameover');
   if (over.winner !== 'north' || over.reason !== 'resign') fail('resign should hand the bot the win');

@@ -201,6 +201,17 @@ function checkGameOver(gameState) {
   return { over: false };
 }
 
+// The winner when `attackerRank` strikes `defenderRank`: "attacker", "defender", or
+// "both" when equal ranks trade and both pieces are removed.
+function battleOutcome(attackerRank, defenderRank) {
+  if (defenderRank === "F") return "attacker";
+  if (defenderRank === "B") return attackerRank === 3 ? "attacker" : "defender";
+  if (attackerRank === 1 && defenderRank === 10) return "attacker";
+  if (attackerRank > defenderRank) return "attacker";
+  if (attackerRank < defenderRank) return "defender";
+  return "both";
+}
+
 function applyMove(gameState, color, from, to) {
   const legal = isLegalMove(gameState, color, from, to);
   if (!legal.ok) return { state: gameState, battle: null, gameOver: false, winner: null, reason: null };
@@ -226,39 +237,14 @@ function applyMove(gameState, color, from, to) {
     defender.revealed = true;
     defender.revealedPly = gameState.ply || 0;
 
-    let outcome;
-    let defenderDied = false;
-    let attackerDied = false;
+    const outcome = battleOutcome(attacker.rank, defender.rank);
+    const defenderDied = outcome === "attacker" || outcome === "both";
+    const attackerDied = outcome === "defender" || outcome === "both";
 
     if (defender.rank === "F") {
-      outcome = "attacker";
-      defenderDied = true;
       gameState.winner = color;
       gameState.reason = "flag";
       gameState.gameOver = true;
-    } else if (defender.rank === "B") {
-      if (attacker.rank === 3) {
-        outcome = "attacker";
-        defenderDied = true;
-      } else {
-        outcome = "defender";
-        attackerDied = true;
-      }
-    } else {
-      if (attacker.rank === 1 && defender.rank === 10) {
-        outcome = "attacker";
-        defenderDied = true;
-      } else if (attacker.rank > defender.rank) {
-        outcome = "attacker";
-        defenderDied = true;
-      } else if (attacker.rank < defender.rank) {
-        outcome = "defender";
-        attackerDied = true;
-      } else {
-        outcome = "both";
-        attackerDied = true;
-        defenderDied = true;
-      }
     }
 
     battle = {
@@ -370,6 +356,7 @@ module.exports = {
   isLegalMove,
   legalMoves,
   applyMove,
+  battleOutcome,
   redactView,
   checkGameOver
 };

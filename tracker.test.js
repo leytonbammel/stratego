@@ -114,6 +114,31 @@ test('a revealed rank is remembered after a per-turn reveal lapses', () => {
   assert.strictEqual(tracker.piece(marshal).rank, 10);
 });
 
+test('rankOdds is certain for known pieces and sums to 1 for unknown ones', () => {
+  const { tracker, play, idAt } = setupGame([2, 10, 2, 2, 2, 2, 2, 2, 3, 3]);
+  const marshal = idAt(3, 1);
+  play('south', [6, 1], [3, 1]);
+  assert.deepStrictEqual(tracker.rankOdds(marshal), { 10: 1 });
+
+  const odds = tracker.rankOdds(idAt(3, 0));
+  const total = Object.values(odds).reduce((a, b) => a + b, 0);
+  assert.ok(Math.abs(total - 1) < 1e-9);
+  assert.strictEqual(odds[10], undefined, 'the Marshal is already accounted for');
+});
+
+test('rankOdds puts Bomb and Flag only on unmoved pieces', () => {
+  const { tracker, play, idAt } = setupGame();
+  const mover = idAt(3, 9);
+  const stayer = idAt(0, 0);
+  play('south', [6, 0], [5, 0]);
+  play('north', [3, 9], [4, 9]);
+  const moved = tracker.rankOdds(mover);
+  assert.strictEqual(moved.B, undefined);
+  assert.strictEqual(moved.F, undefined);
+  // 6 Bombs among the 39 pieces that haven't moved.
+  assert.ok(Math.abs(tracker.rankOdds(stayer).B - 6 / 39) < 1e-9);
+});
+
 test('the tracker agrees with the real game state throughout random games', () => {
   for (let seed = 1; seed <= 10; seed++) {
     const random = seededRandom(seed);
@@ -148,6 +173,7 @@ test('the tracker agrees with the real game state throughout random games', () =
           if (seen.rank !== null) assert.strictEqual(seen.rank, piece.rank, `seed ${seed}: wrong rank for ${piece.id}`);
           assert.strictEqual(seen.moved, moved.has(piece.id), `seed ${seed}: wrong moved flag for ${piece.id}`);
           assert.ok(tracker.possibleRanks(piece.id).includes(piece.rank), `seed ${seed}: true rank ruled out for ${piece.id}`);
+          assert.ok(tracker.rankOdds(piece.id)[piece.rank] > 0, `seed ${seed}: true rank given zero odds for ${piece.id}`);
         }
         assert.strictEqual(tracker.enemyPieces().length, alive);
         assert.deepStrictEqual(tracker.remaining(), truthCounts);

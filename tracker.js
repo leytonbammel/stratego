@@ -30,8 +30,8 @@ function createTracker() {
     // Sync with the board: start tracking new ids, keep any rank currently on
     // show, and forget pieces that are no longer there (they died).
     const onBoard = new Set();
-    for (const row of view.board) {
-      for (const cell of row) {
+    for (let r = 0; r < 10; r++) {
+      for (const cell of view.board[r]) {
         if (!cell || typeof cell !== 'object' || cell.own) continue;
         onBoard.add(cell.id);
         let entry = pieces.get(cell.id);
@@ -83,8 +83,36 @@ function createTracker() {
     return ALL_RANKS.filter(r => unknown[r] > 0 && !(p.moved && (r === 'B' || r === 'F')));
   }
 
+  // A simple count-based estimate of what this piece is, as { rank: probability }.
+  // Bombs and the Flag can only be among the unknown pieces that never moved, so
+  // their odds are shared out over those; mobile ranks share whatever is left.
+  function rankOdds(id) {
+    const p = pieces.get(id);
+    if (!p) return {};
+    if (p.rank !== null) return { [p.rank]: 1 };
+
+    const unknown = unknownCounts();
+    const immobile = unknown.B + unknown.F;
+    let mobileTotal = 0;
+    for (const r of ALL_RANKS) if (r !== 'B' && r !== 'F') mobileTotal += unknown[r];
+    let unmovedUnknown = 0;
+    for (const q of pieces.values()) if (q.rank === null && !q.moved) unmovedUnknown++;
+
+    const pImmobile = p.moved || immobile === 0 ? 0 : Math.min(1, immobile / unmovedUnknown);
+    const odds = {};
+    for (const r of ALL_RANKS) {
+      if (unknown[r] <= 0) continue;
+      const chance = r === 'B' || r === 'F'
+        ? pImmobile * unknown[r] / immobile
+        : (1 - pImmobile) * unknown[r] / mobileTotal;
+      if (chance > 0) odds[r] = chance;
+    }
+    return odds;
+  }
+
   return {
     observe,
+    rankOdds,
     piece: (id) => (pieces.has(id) ? { ...pieces.get(id) } : undefined),
     enemyPieces: () => [...pieces.values()].map(p => ({ ...p })),
     remaining: () => ({ ...remaining }),

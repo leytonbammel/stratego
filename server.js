@@ -195,6 +195,8 @@ function handleMove(room, color, from, to) {
 
 /* ------------------------------------------------------------------- bots */
 
+const DEFAULT_BOT_LEVEL = 'heuristic';
+
 // A bot seat looks like a player seat, with `bot` holding the bot itself and no
 // socket. It counts as connected, so the human sees an opponent who is present;
 // anything that reacts to a seat's socket must skip it via `p.bot`.
@@ -321,7 +323,8 @@ wss.on('connection', (ws) => {
       // so the room skips waiting and goes straight to setup.
       const vsBot = !!msg.vsBot;
       if (vsBot) {
-        room.players.north = createBotSeat('random');
+        const level = bots.LEVELS.includes(msg.botLevel) ? msg.botLevel : DEFAULT_BOT_LEVEL;
+        room.players.north = createBotSeat(level);
         readyBots(room);
       }
 

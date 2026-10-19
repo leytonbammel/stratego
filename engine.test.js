@@ -4,7 +4,7 @@ const engine = require('./engine');
 
 const {
   RANKS, RANK_NAMES, isLake, homeRows, validateSetup,
-  createGame, isLegalMove, legalMoves, applyMove, redactView, checkGameOver
+  createGame, isLegalMove, legalMoves, applyMove, battleOutcome, redactView, checkGameOver
 } = engine;
 
 function createValidPlacement(color) {
@@ -288,4 +288,15 @@ test('13. an unrevealed piece is never exposed under either mode', (t) => {
   // [9][9] is south's spare, which has never fought; north must not see its rank.
   assert.strictEqual(enemySees(state, [9, 9], { revealMode: "oneturn" }), false);
   assert.strictEqual(enemySees(state, [9, 9], { revealMode: "permanent" }), false);
+});
+
+test('battleOutcome covers the special cases', () => {
+  assert.strictEqual(battleOutcome(9, 6), 'attacker');
+  assert.strictEqual(battleOutcome(6, 9), 'defender');
+  assert.strictEqual(battleOutcome(7, 7), 'both');
+  assert.strictEqual(battleOutcome(1, 10), 'attacker'); // Spy strikes the Marshal
+  assert.strictEqual(battleOutcome(10, 1), 'attacker');
+  assert.strictEqual(battleOutcome(10, 'B'), 'defender');
+  assert.strictEqual(battleOutcome(3, 'B'), 'attacker'); // Miner defuses
+  assert.strictEqual(battleOutcome(2, 'F'), 'attacker');
 });

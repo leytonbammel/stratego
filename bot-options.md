@@ -45,6 +45,19 @@ back) with some randomization.
   fine for practice.
 - **Best value for the effort.**
 
+**Built** (`bot-heuristic.js`, level `heuristic`, the default for Play vs Computer). It scores every
+legal move instead of applying the rules strictly in order, so the priorities above become weights.
+Attacks are scored by expected material using the tracker's `rankOdds`, which covers rules 1, 5 and
+6 at once. Tuning notes from bot-vs-bot runs (`node bot-match.js`, plus head-to-head variants):
+- It beats the random bot 400/400 from either side.
+- The biggest leak was pieces other than Miners attacking likely Bombs for a small chance at the
+  Flag. Valuing the Flag at 0 for non-Miners while any Miner is alive won 57% head-to-head and
+  halved bomb hits.
+- Weighting Bomb odds toward the enemy's back rows made it slightly *worse*, so it was dropped.
+- Endgames stalled when every remaining attack looked unprofitable. A stall breaker that raises the
+  value of attacks the longer there's no battle cut capped games from about 10% to 1%.
+- The tuned weights beat the original ones 56% head-to-head.
+
 ## 3. Belief-tracking bot (the strong version of 2)
 The tracker's bookkeeping already narrows every unknown enemy piece:
 - A piece that moved can't be a Bomb or Flag.
@@ -55,6 +68,10 @@ This option adds the probabilistic part on top: a distribution over each unknown
 constrained by those facts and the remaining counts, with moves scored by expected value under it.
 Behavior can sharpen the guesses too; for example, a piece charging at your revealed Captain is
 probably stronger than a Captain.
+
+The heuristic bot already uses a simple count-based version (`tracker.rankOdds`) for its attack
+scores, so what is left here is sharpening those odds from behavior, and considering the
+opponent's likely reply instead of scoring each move in isolation.
 - **Effort:** a couple of days beyond option 2, since the bookkeeping is already done.
 - **Quality:** noticeably stronger and more human-like. It does **not** bluff or exploit your habits
   on its own; that would need a model of what the opponent believes, or learning across games.
