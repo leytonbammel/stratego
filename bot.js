@@ -4,7 +4,8 @@
 //
 // Every bot has the same shape:
 //   chooseSetup(color)          -> a 40-piece placement for validateSetup
-//   observe(view, battle)       -> called after every ply, both sides' moves
+//   observe(view, battle)       -> called once with the opening position (battle null),
+//                                  then after every ply, both sides' moves
 //   chooseMove(view, moves)     -> one of `moves`, or null if there are none
 const engine = require('./engine');
 

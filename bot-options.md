@@ -72,11 +72,14 @@ The branching factor is high, but depth 2-3 with a decent evaluation function is
   instance.
 
 ## Enemy tracker (shared by options 2-4)
-A pure module that follows each enemy piece by `id`:
-- `observe(view, battle)` runs every ply, including the human's moves. It uses `lastMove` to record
-  which piece moved and how far, and the `battle` message to record revealed ranks.
-- Per piece it records: known rank, has moved, is a Scout.
-- Globally it tracks the remaining count of each enemy rank.
+A pure module (`tracker.js`, built) that follows each enemy piece by `id`:
+- `observe(view, battle)` runs once with the opening position, then every ply, including the
+  human's moves. It uses `lastMove` to record which piece moved and how far, and the `battle`
+  message to record revealed ranks.
+- Per piece it records: known rank (a Scout given away by a long move counts as known) and has
+  moved.
+- Globally it tracks the remaining count of each enemy rank. `possibleRanks(id)` and
+  `unknownCounts()` give options 2 and 3 what they need to reason about unknown pieces.
 
 **Perfect memory vs `oneturn`:** a bot that remembers every reveal effectively plays `oneturn` rooms
 as if they were `permanent`. Redaction already controls what it *sees*; what it *remembers* is a

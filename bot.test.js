@@ -63,7 +63,7 @@ test('playMatch between random bots ends in a result within the ply cap', () => 
   }
 });
 
-test('playMatch feeds every ply to both bots through observe', () => {
+test('playMatch shows both bots the opening position and every ply', () => {
   const rng = seededRandom(11);
   const seen = { south: 0, north: 0 };
   const watcher = (color) => {
@@ -84,6 +84,6 @@ test('playMatch feeds every ply to both bots through observe', () => {
     };
   };
   const result = playMatch(watcher('south'), watcher('north'), { plyCap: 200 });
-  assert.strictEqual(seen.south, result.plies);
-  assert.strictEqual(seen.north, result.plies);
+  assert.strictEqual(seen.south, result.plies + 1);
+  assert.strictEqual(seen.north, result.plies + 1);
 });

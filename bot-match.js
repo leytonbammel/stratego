@@ -13,6 +13,9 @@ const DEFAULT_PLY_CAP = 3000;
 function playMatch(southBot, northBot, { plyCap = DEFAULT_PLY_CAP, settings = {} } = {}) {
   const bots = { south: southBot, north: northBot };
   const gameState = engine.createGame(southBot.chooseSetup('south'), northBot.chooseSetup('north'));
+  for (const c of ['south', 'north']) {
+    bots[c].observe(engine.redactView(gameState, c, settings), null);
+  }
 
   while (!gameState.gameOver && gameState.ply < plyCap) {
     const color = gameState.turn;

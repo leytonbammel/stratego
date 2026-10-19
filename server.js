@@ -266,6 +266,7 @@ function startGameIfReady(room) {
   const n = room.players.north;
   if (!(s && s.ready && n && n.ready)) return;
   room.gameState = engine.createGame(s.placement, n.placement);
+  notifyBots(room, null); // let bots see the opening position before anyone moves
   setPhase(room, 'play');
   sendStateToBoth(room);
   scheduleBotMove(room);
