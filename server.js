@@ -195,7 +195,7 @@ function handleMove(room, color, from, to) {
 
 /* ------------------------------------------------------------------- bots */
 
-const DEFAULT_BOT_LEVEL = 'heuristic';
+const DEFAULT_BOT_LEVEL = 'advanced';
 
 // A bot seat looks like a player seat, with `bot` holding the bot itself and no
 // socket. It counts as connected, so the human sees an opponent who is present;

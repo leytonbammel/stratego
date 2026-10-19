@@ -36,6 +36,14 @@ const DEFAULT_WEIGHTS = {
   noise: 1.5,
   flagValue: VALUE.F,          // finding the Flag, worth more than any piece
   flagValueIfMiners: 0,        // the same for non-Miners while we still have Miners to send instead
+
+  // Upgrades (off for the `heuristic` level):
+  balanced: false,      // tracker fits rank odds across the whole army
+  behavior: 1,          // tracker reads approach/retreat moves (1 = off)
+  lookahead: false,     // score the opponent's best reply anywhere on the board, not just
+                        // threats next to the moved piece
+  flagLoss: 500,        // lookahead: losing our Flag is losing the game
+  replySpread: 0.2,     // lookahead: share of the opponent's other threats that also counts
   stall: 10,            // added to every attack per 50 plies without a battle, so endgames don't stall
 };
 
@@ -124,11 +132,12 @@ function templateSetup(color, random) {
 
 /* ------------------------------------------------------------------- play */
 
-// Expected material gain from `rank` attacking a piece with these odds, and
-// the chance the attacker survives. `flagValue` is what finding the Flag is worth.
+// Expected material gain from `rank` attacking a piece with these odds, and the
+// chances it wins outright or trades. `flagValue` is what finding the Flag is worth.
 function attackValue(rank, odds, flagValue) {
   let gain = 0;
   let pWin = 0;
+  let pTrade = 0;
   for (const [key, p] of Object.entries(odds)) {
     const target = key === 'B' || key === 'F' ? key : Number(key);
     const outcome = engine.battleOutcome(rank, target);
@@ -139,9 +148,10 @@ function attackValue(rank, odds, flagValue) {
       gain -= p * VALUE[rank];
     } else {
       gain += p * (VALUE[target] - VALUE[rank]);
+      pTrade += p;
     }
   }
-  return { gain, pWin };
+  return { gain, pWin, pTrade };
 }
 
 // Chance that an enemy piece with these odds beats `rank` if it attacks.
@@ -184,7 +194,7 @@ function distanceMap(board, targets, open) {
 
 function createHeuristicBot(random, overrides = {}) {
   const w = { ...DEFAULT_WEIGHTS, ...overrides };
-  const tracker = createTracker();
+  const tracker = createTracker({ balanced: w.balanced, behavior: w.behavior });
   const recentSquares = new Map(); // own piece id -> squares it recently left
   let quietPlies = 0;
 
@@ -233,6 +243,64 @@ function createHeuristicBot(random, overrides = {}) {
       return worst * VALUE[rank] * (seen ? 1 : w.hiddenRisk);
     };
 
+    // What the opponent gains by attacking our piece `mine` with the enemy piece
+    // `enemy`, from `dist` squares away (beyond 1 only a Scout can). If it can see
+    // our rank it attacks only with ranks that win; if not, it sometimes attacks blind.
+    const strikeCache = new Map();
+    const strikeValue = (enemy, mine, dist) => {
+      const key = `${enemy.id}:${mine.id}:${dist > 1 ? 1 : 0}:${mine.revealed ? 1 : 0}`;
+      if (strikeCache.has(key)) return strikeCache.get(key);
+      const lost = mine.rank === 'F' ? w.flagLoss : VALUE[mine.rank];
+      let value = 0;
+      for (const [k, p] of Object.entries(oddsOf(enemy))) {
+        if (k === 'B' || k === 'F') continue;
+        const r = Number(k);
+        if (dist > 1 && r !== 2) continue;
+        const outcome = engine.battleOutcome(r, mine.rank);
+        const gain = outcome === 'attacker' ? lost : outcome === 'defender' ? -VALUE[r] : lost - VALUE[r];
+        if (gain > 0) value += p * gain;
+      }
+      if (!mine.revealed) value *= w.hiddenRisk;
+      strikeCache.set(key, value);
+      return value;
+    };
+
+    // Expected material we lose to the opponent's best reply on `b`, a board after
+    // our move, plus a share of the threats it leaves for later.
+    const replyLoss = (b) => {
+      let worst = 0;
+      let total = 0;
+      for (const { cell, at } of enemies) {
+        if (b[at[0]][at[1]] !== cell) continue; // taken in this line
+        for (const [dr, dc] of DIRS) {
+          let r = at[0] + dr;
+          let c = at[1] + dc;
+          let dist = 1;
+          while (r >= 0 && r <= 9 && c >= 0 && c <= 9 && b[r][c] !== 'lake') {
+            const t = b[r][c];
+            if (t) {
+              if (isOwn(t)) {
+                const v = strikeValue(cell, t, dist);
+                worst = Math.max(worst, v);
+                total += v;
+              }
+              break;
+            }
+            r += dr;
+            c += dc;
+            dist++;
+          }
+        }
+      }
+      return worst + w.replySpread * (total - worst);
+    };
+    const after = (from, to, landed) => {
+      const b = board.map(row => row.slice());
+      b[from[0]][from[1]] = null;
+      if (landed !== undefined) b[to[0]][to[1]] = landed;
+      return b;
+    };
+
     // Per moving piece, distances to the targets it should head for.
     const routeCache = new Map();
     const routesFor = (from, rank) => {
@@ -259,17 +327,24 @@ function createHeuristicBot(random, overrides = {}) {
       const piece = board[from[0]][from[1]];
       const target = board[to[0]][to[1]];
       const rank = piece.rank;
-      let score = danger(from, rank, piece.revealed);
+      let score = w.lookahead ? 0 : danger(from, rank, piece.revealed);
 
       if (target) {
-        const { gain, pWin } = attackValue(rank, oddsOf(target), flagValueFor(rank));
+        const { gain, pWin, pTrade } = attackValue(rank, oddsOf(target), flagValueFor(rank));
         score += gain + w.stall * Math.floor(quietPlies / 50);
         if (tracker.piece(target.id).rank === null) score += w.info * (VALUE[rank] > VALUE[6] ? w.infoStrong : 1);
         if (!piece.revealed) score -= pWin * (EXPOSURE[rank] || 0);
-        score -= pWin * danger(to, rank, true, to);
+        if (w.lookahead) {
+          const pLose = 1 - pWin - pTrade;
+          score -= pWin * replyLoss(after(from, to, { ...piece, revealed: true }))
+            + pLose * replyLoss(after(from, to))
+            + pTrade * replyLoss(after(from, to, null));
+        } else {
+          score -= pWin * danger(to, rank, true, to);
+        }
         if (intruders.some(e => e.at[0] === to[0] && e.at[1] === to[1])) score += w.guardAttack;
       } else {
-        score -= danger(to, rank, piece.revealed);
+        score -= w.lookahead ? replyLoss(after(from, to, piece)) : danger(to, rank, piece.revealed);
         const routes = routesFor(from, rank);
         if (routes.favored) score += w.progress * closer(routes.favored, from, to);
         else score += w.explore * closer(routes.unknown, from, to);
@@ -308,4 +383,9 @@ function createHeuristicBot(random, overrides = {}) {
   };
 }
 
-module.exports = { createHeuristicBot, templateSetup, DEFAULT_WEIGHTS };
+// The `advanced` level: the same rules with every upgrade switched on. Reading
+// behavior harder (5) won more bot-vs-bot games, but bots never bluff; 3 is a
+// safer bet against people who do.
+const ADVANCED = { balanced: true, behavior: 3, lookahead: true, hiddenRisk: 0.5 };
+
+module.exports = { createHeuristicBot, templateSetup, DEFAULT_WEIGHTS, ADVANCED };

@@ -18,9 +18,9 @@ function position(pieces) {
   };
 }
 
-function choose(pieces, seed = 1) {
+function choose(pieces, seed = 1, level = 'heuristic') {
   const gameState = position(pieces);
-  const bot = createBot('heuristic', seededRandom(seed));
+  const bot = createBot(level, seededRandom(seed));
   const view = engine.redactView(gameState, 'north', {});
   bot.observe(view, null);
   return bot.chooseMove(view, engine.legalMoves(gameState, 'north'));
@@ -71,6 +71,40 @@ test('does not throw the Marshal at an unknown piece', () => {
     assert.ok(!(move.from[0] === 3 && move.from[1] === 4 && move.to[0] === 4 && move.to[1] === 4),
       `seed ${seed}: Marshal attacked an unknown piece`);
   }
+});
+
+test('advanced level sees a capture that opens a Scout lane onto its Spy', () => {
+  // North's Sergeant blocks column 4 between a known enemy Scout far down the
+  // column and North's revealed Spy. Taking the Scout next to it would open the lane.
+  const lane = [
+    ...BACKDROP,
+    N(1, 4, 1, true),   // revealed Spy
+    N(3, 4, 4),         // Sergeant blocking the column
+    S(3, 5, 2, true),   // known Scout, free to take
+    S(8, 4, 2, true),   // known Scout with a clear run up column 4
+    N(1, 8, 5), S(9, 0, 5),
+  ];
+  const capture = { from: [3, 4], to: [3, 5] };
+  const isCapture = (m) => m.from.join() === capture.from.join() && m.to.join() === capture.to.join();
+  let heuristicTook = 0;
+  for (let seed = 1; seed <= 10; seed++) {
+    if (isCapture(choose(lane, seed, 'heuristic'))) heuristicTook++;
+    assert.ok(!isCapture(choose(lane, seed, 'advanced')), `seed ${seed}: advanced opened the lane`);
+  }
+  assert.ok(heuristicTook > 0, 'the scenario should tempt the plain heuristic');
+});
+
+test('advanced level beats the random bot almost every game', () => {
+  const random = seededRandom(43);
+  let wins = 0;
+  for (let i = 0; i < 20; i++) {
+    const south = i % 2 === 0;
+    const a = createBot('advanced', random);
+    const r = createBot('random', random);
+    const result = south ? playMatch(a, r) : playMatch(r, a);
+    if (result.winner === (south ? 'south' : 'north')) wins++;
+  }
+  assert.ok(wins >= 18, `advanced won only ${wins}/20`);
 });
 
 test('beats the random bot almost every game', () => {

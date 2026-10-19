@@ -139,12 +139,130 @@ test('rankOdds puts Bomb and Flag only on unmoved pieces', () => {
   assert.ok(Math.abs(tracker.rankOdds(stayer).B - 6 / 39) < 1e-9);
 });
 
+// A hand-built view from South's side: a full unknown North army on rows 0-3,
+// plus any extra cells. Returns helpers to move North pieces and re-observe.
+function handView(tracker, extra = []) {
+  const board = Array(10).fill(null).map((_, r) =>
+    Array(10).fill(null).map((__, c) => (engine.isLake(r, c) ? 'lake' : null)));
+  let id = 1;
+  for (let r = 0; r < 4; r++) for (let c = 0; c < 10; c++) board[r][c] = { own: false, revealed: false, id: id++ };
+  for (const { r, c, cell } of extra) board[r][c] = cell;
+  const view = { you: 'south', turn: 'south', phase: 'play', lastMove: null, board };
+  tracker.observe(view, null);
+  return {
+    board,
+    northMove(from, to) {
+      board[to[0]][to[1]] = board[from[0]][from[1]];
+      board[from[0]][from[1]] = null;
+      view.lastMove = { from, to, color: 'north' };
+      tracker.observe(view, null);
+    },
+  };
+}
+
+const sum = (odds) => Object.values(odds).reduce((a, b) => a + b, 0);
+const chanceOf = (odds, test) => Object.entries(odds).reduce((a, [r, p]) => a + (test(r) ? p : 0), 0);
+
+// Moves twelve North pieces forward (into empty, non-lake squares only).
+function advanceTwelve(northMove) {
+  for (const c of [0, 1, 4, 5, 8, 9]) northMove([3, c], [4, c]);
+  for (const c of [0, 1, 4, 5, 8, 9]) northMove([2, c], [3, c]);
+}
+
+test('balanced odds: rows sum to 1 and each rank adds up to its unknown count', () => {
+  const tracker = createTracker({ balanced: true, behavior: 3 });
+  const captain = { own: true, rank: 6, revealed: true, id: 100 };
+  const { northMove } = handView(tracker, [{ r: 5, c: 4, cell: captain }]);
+  advanceTwelve(northMove); // [3,4] -> [4,4] walks up to the Captain on the way
+
+  const unknown = tracker.unknownCounts();
+  const totals = Object.fromEntries(ALL_RANKS.map(r => [r, 0]));
+  for (const p of tracker.enemyPieces()) {
+    const odds = tracker.rankOdds(p.id);
+    assert.ok(Math.abs(sum(odds) - 1) < 1e-9);
+    if (p.moved) assert.ok(!odds.B && !odds.F, 'a moved piece cannot be a Bomb or Flag');
+    for (const [r, pr] of Object.entries(odds)) totals[r] += pr;
+  }
+  for (const r of ALL_RANKS) assert.ok(Math.abs(totals[r] - unknown[r]) < 0.05, `rank ${r}: ${totals[r]} vs ${unknown[r]}`);
+});
+
+test('balanced odds share Bombs and the Flag evenly over the unmoved pieces', () => {
+  const tracker = createTracker({ balanced: true });
+  const { northMove } = handView(tracker);
+  advanceTwelve(northMove);
+  // 28 unmoved pieces must hold all 6 Bombs and the Flag.
+  const stayer = 1; // id of [0,0], never moved
+  assert.ok(Math.abs(tracker.rankOdds(stayer).B - 6 / 28) < 0.01);
+  assert.ok(Math.abs(chanceOf(tracker.rankOdds(stayer), r => r === 'B' || r === 'F') - 7 / 28) < 0.01);
+});
+
+test('an enemy piece that walks up to a revealed piece is probably stronger', () => {
+  const play = (tracker) => {
+    const captain = { own: true, rank: 6, revealed: true, id: 100 };
+    const { board, northMove } = handView(tracker, [{ r: 5, c: 4, cell: captain }]);
+    const ids = { neutral: board[3][0].id, approacher: board[3][4].id };
+    northMove([3, 0], [4, 0]);
+    northMove([3, 4], [4, 4]); // now next to the Captain
+    return ids;
+  };
+  const tracker = createTracker({ balanced: true, behavior: 3 });
+  const { neutral, approacher } = play(tracker);
+  const plain = createTracker({ balanced: true });
+  play(plain);
+
+  const stronger = (r) => r !== 'B' && r !== 'F' && Number(r) > 6;
+  assert.ok(chanceOf(tracker.rankOdds(approacher), stronger) > chanceOf(tracker.rankOdds(neutral), stronger) + 0.1);
+  // Balancing: if that piece is likely the Marshal, the others are a little less likely to be.
+  assert.ok(tracker.rankOdds(neutral)[10] < plain.rankOdds(neutral)[10]);
+});
+
+test('an enemy piece that backs away from a revealed piece is probably weaker', () => {
+  const tracker = createTracker({ balanced: true, behavior: 3 });
+  const major = { own: true, rank: 7, revealed: true, id: 100 };
+  const { board, northMove } = handView(tracker, [{ r: 4, c: 4, cell: major }]);
+  const neutral = board[3][0].id;
+  const runner = board[3][4].id; // starts next to the Major
+  northMove([3, 0], [4, 0]);
+  northMove([3, 5], [4, 5]);
+  northMove([3, 4], [3, 5]); // steps out of the Major's reach
+  const weaker = (r) => r !== 'B' && r !== 'F' && Number(r) < 7;
+  assert.ok(chanceOf(tracker.rankOdds(runner), weaker) > chanceOf(tracker.rankOdds(neutral), weaker) + 0.1);
+});
+
+test('repeated behavior evidence stays bounded', () => {
+  const tracker = createTracker({ balanced: true, behavior: 3 });
+  const captain = { own: true, rank: 6, revealed: true, id: 100 };
+  const { board, northMove } = handView(tracker, [{ r: 5, c: 4, cell: captain }]);
+  const shuffler = board[3][4].id;
+  northMove([3, 4], [4, 4]);
+  for (let i = 0; i < 1000; i++) { // approach over and over from the side
+    northMove([4, 4], [4, 5]);
+    northMove([4, 5], [4, 4]);
+  }
+  const odds = tracker.rankOdds(shuffler);
+  assert.ok(Object.values(odds).every(Number.isFinite));
+  assert.ok(Math.abs(sum(odds) - 1) < 1e-9);
+  assert.ok(odds[2] > 0.001, 'weaker ranks should never be ruled out by behavior alone');
+});
+
+test('behavior ignores pieces the enemy cannot see', () => {
+  const tracker = createTracker({ balanced: true, behavior: 3 });
+  const hidden = { own: true, rank: 6, revealed: false, id: 100 };
+  const { board, northMove } = handView(tracker, [{ r: 5, c: 4, cell: hidden }]);
+  const neutral = board[3][0].id;
+  const approacher = board[3][4].id;
+  northMove([3, 0], [4, 0]);
+  northMove([3, 4], [4, 4]);
+  assert.deepStrictEqual(tracker.rankOdds(approacher), tracker.rankOdds(neutral));
+});
+
 test('the tracker agrees with the real game state throughout random games', () => {
   for (let seed = 1; seed <= 10; seed++) {
     const random = seededRandom(seed);
     const settings = { revealMode: seed % 2 ? 'permanent' : 'oneturn' };
     const gameState = engine.createGame(randomSetup('south', random), randomSetup('north', random));
-    const trackers = { south: createTracker(), north: createTracker() };
+    const options = [{}, { balanced: true }, { balanced: true, behavior: 3 }][seed % 3];
+    const trackers = { south: createTracker(options), north: createTracker(options) };
     const moved = new Set();
     const observeAll = (battle) => {
       for (const c of ['south', 'north']) trackers[c].observe(engine.redactView(gameState, c, settings), battle);

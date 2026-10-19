@@ -8,7 +8,7 @@
 //                                  then after every ply, both sides' moves
 //   chooseMove(view, moves)     -> one of `moves`, or null if there are none
 const engine = require('./engine');
-const { createHeuristicBot } = require('./bot-heuristic');
+const { createHeuristicBot, ADVANCED } = require('./bot-heuristic');
 
 // Small deterministic PRNG (mulberry32) so tests and bot-vs-bot runs can be replayed.
 function seededRandom(seed) {
@@ -65,6 +65,7 @@ function createRandomBot(random) {
 const LEVELS = {
   random: createRandomBot,
   heuristic: createHeuristicBot,
+  advanced: (random) => createHeuristicBot(random, ADVANCED),
 };
 
 function createBot(level = 'random', random = Math.random) {

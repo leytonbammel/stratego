@@ -72,6 +72,25 @@ probably stronger than a Captain.
 The heuristic bot already uses a simple count-based version (`tracker.rankOdds`) for its attack
 scores, so what is left here is sharpening those odds from behavior, and considering the
 opponent's likely reply instead of scoring each move in isolation.
+
+**Built** as level `advanced`, the default for Play vs Computer: the heuristic bot with three
+switchable upgrades.
+- **Balanced odds** (`createTracker({ balanced: true })`): rank odds for all unknown pieces are
+  fitted together (Sinkhorn balancing), so each rank's odds add up across the army to how many of
+  that rank are unknown. This matters most once behavior skews a piece: if one piece is probably
+  the Marshal, the others become less likely to be.
+- **Behavior** (`behavior: 3`): an enemy piece that walks up to one of our pieces it can see
+  multiplies the weight of the ranks that beat it by 3; one that backs away does the same for the
+  ranks that lose to it. The evidence is capped so bluffs can't rule a rank out entirely.
+- **Lookahead**: each candidate move is scored against the opponent's most damaging reply anywhere
+  on the board, including Scout strikes down lanes the move opens and attacks on a hidden Flag,
+  instead of only threats next to the moved piece.
+
+Results: `advanced` beats `heuristic` about 57% of games and the random bot 400/400, at about
+1.3 ms a move. Behavior reading was the biggest single gain, and `behavior: 5` won even more (63%).
+But bots never bluff, so 3 was kept as the safer bet against people. That's worth revisiting once
+it has played real games. Full Expectimax or MCTS (option 4) is still open if `advanced` proves
+too easy.
 - **Effort:** a couple of days beyond option 2, since the bookkeeping is already done.
 - **Quality:** noticeably stronger and more human-like. It does **not** bluff or exploit your habits
   on its own; that would need a model of what the opponent believes, or learning across games.
@@ -136,3 +155,6 @@ tiers deliberately forget reveals after a few turns.
    Measure it against the random bot.
 4. **Expected-value scoring (option 3)** using the tracker's probabilities.
 5. Move to option 4 only if option 3 proves too easy.
+
+Steps 1-4 are built: levels `random`, `heuristic` and `advanced` (the default). The server accepts
+`botLevel` on `create`, but the client has no difficulty picker yet.
