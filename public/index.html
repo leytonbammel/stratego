@@ -15,7 +15,13 @@
       <h1>Stratego Online</h1>
       <div id="conn-status">Connecting to server…</div>
       <button id="btn-create">Create Game</button>
-      <button id="btn-vs-bot">Play vs Computer</button>
+      <div class="vs-bot">
+        <button id="btn-vs-bot">Play vs Computer</button>
+        <div class="difficulty" role="radiogroup" aria-label="Computer difficulty">
+          <label><input type="radio" name="difficulty" value="heuristic"><span>Normal</span></label>
+          <label><input type="radio" name="difficulty" value="advanced"><span>Hard</span></label>
+        </div>
+      </div>
       <div class="lobby-or">OR</div>
       <div class="join-area">
         <!-- maxlength is deliberately loose: the browser would otherwise truncate a

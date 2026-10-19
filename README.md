@@ -9,9 +9,9 @@ until they're revealed in battle, so there's no way to peek by inspecting networ
 - Full classic 10×10 Stratego rules: setup phase, all piece ranks, scouts (move + strike at range),
   Spy beats Marshal, Miners defuse Bombs, Flag capture wins, two-squares anti-stall rule.
 - Room codes — one player creates a game, the other joins with the 4-character code.
-- Play vs Computer — a server-side bot takes the other seat. It tracks what it has learned about
-  your pieces, reads how you move them, and weighs your best reply before each move; see
-  `bot-options.md` for the design.
+- Play vs Computer, on Normal or Hard — a server-side bot takes the other seat and tracks what it
+  has learned about your pieces. On Hard it also reads how you move them and weighs your best
+  reply before each move; see `bot-options.md` for the design.
 - Private setup: arrange your 40 pieces (drag/tap or Auto-fill), then Ready up.
 - Live play with turn indicator, captured-piece tracker, battle results, resign & rematch.
 - Built-in chat so you can talk while you play.

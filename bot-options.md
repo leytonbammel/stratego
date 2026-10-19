@@ -156,5 +156,6 @@ tiers deliberately forget reveals after a few turns.
 4. **Expected-value scoring (option 3)** using the tracker's probabilities.
 5. Move to option 4 only if option 3 proves too easy.
 
-Steps 1-4 are built: levels `random`, `heuristic` and `advanced` (the default). The server accepts
-`botLevel` on `create`, but the client has no difficulty picker yet.
+Steps 1-4 are built: levels `random`, `heuristic` and `advanced`. The lobby offers **Normal**
+(`heuristic`) and **Hard** (`advanced`, the default) under Play vs Computer; the random bot is left
+out because it's no use as practice.

@@ -104,6 +104,16 @@ function connect() {
   if (botPhase.phase !== 'setup') fail('bot room should start in setup, got ' + botPhase.phase);
   const botStatus = await c.next('setupStatus');
   if (!botStatus.opponentPresent || !botStatus.opponentReady) fail('bot should be present and ready');
+  if (botStatus.opponentBotLevel !== 'advanced') fail('default bot should be advanced, got ' + botStatus.opponentBotLevel);
+
+  // A chosen level is honored; an unknown one falls back to the default.
+  for (const [asked, expected] of [['heuristic', 'heuristic'], ['grandmaster', 'advanced']]) {
+    const e = await connect();
+    e.send2({ type: 'create', vsBot: true, botLevel: asked });
+    const status = await e.next('setupStatus');
+    if (status.opponentBotLevel !== expected) fail(`botLevel ${asked} should give ${expected}, got ${status.opponentBotLevel}`);
+    e.close();
+  }
 
   // The bot seat can't be taken by joining, or claimed with a missing token.
   const d = await connect();

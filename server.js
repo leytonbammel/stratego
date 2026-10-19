@@ -115,7 +115,7 @@ function sendSetupStatus(room) {
       youReady: pSouth.ready,
       opponentReady: pNorth ? pNorth.ready : false,
       opponentPresent: !!pNorth && pNorth.connected,
-      opponentIsBot: !!(pNorth && pNorth.bot)
+      opponentBotLevel: pNorth && pNorth.bot ? pNorth.botLevel : null
     });
   }
   if (pNorth && pNorth.connected) {
@@ -124,7 +124,7 @@ function sendSetupStatus(room) {
       youReady: pNorth.ready,
       opponentReady: pSouth ? pSouth.ready : false,
       opponentPresent: !!pSouth && pSouth.connected,
-      opponentIsBot: !!(pSouth && pSouth.bot)
+      opponentBotLevel: pSouth && pSouth.bot ? pSouth.botLevel : null
     });
   }
 }

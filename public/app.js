@@ -86,6 +86,9 @@ const NUMBERING_LABELS = {
 // Which numbering *you* read the board in. Purely cosmetic, so it is a personal
 // preference rather than a room rule — the two players may differ.
 let numbering = localStorage.getItem('numbering') === 'modern' ? 'modern' : 'classic';
+// Difficulty for the next vs-Computer game. Remembered, like numbering.
+const BOT_LEVEL_NAMES = { heuristic: 'Normal', advanced: 'Hard' };
+let botLevel = localStorage.getItem('botLevel') === 'heuristic' ? 'heuristic' : 'advanced';
 
 // Room rules. Owned by the host and pushed by the server once a room exists;
 // until then this holds the host's remembered preference for the next room.
@@ -406,7 +409,7 @@ function handleMessage(msg) {
         document.getElementById('setup-status').textContent = msg.opponentReady ? 'Both ready! Starting...' : 'Waiting for opponent...';
       } else {
         document.getElementById('setup-status').textContent =
-          msg.opponentIsBot ? 'Playing the computer. Place your pieces!'
+          msg.opponentBotLevel ? `Playing the computer (${BOT_LEVEL_NAMES[msg.opponentBotLevel] || 'Hard'}). Place your pieces!`
           : msg.opponentPresent ? 'Opponent joined. Place your pieces!' : 'Waiting for opponent to join...';
       }
       break;
@@ -870,13 +873,21 @@ function normalizeRoomCode(raw) {
 document.addEventListener('DOMContentLoaded', () => {
   initWebSocket();
   syncSettingsForm();
+  updateHostControls(); // a reload restores myColor from storage, so restore its controls too
 
   document.getElementById('btn-create').onclick = () => {
     send({ type: 'create', settings: { revealMode: roomSettings.revealMode } });
   };
   document.getElementById('btn-vs-bot').onclick = () => {
-    send({ type: 'create', vsBot: true, settings: { revealMode: roomSettings.revealMode } });
+    send({ type: 'create', vsBot: true, botLevel, settings: { revealMode: roomSettings.revealMode } });
   };
+  document.querySelectorAll('input[name="difficulty"]').forEach(input => {
+    input.checked = input.value === botLevel;
+    input.addEventListener('change', () => {
+      botLevel = input.value;
+      localStorage.setItem('botLevel', botLevel);
+    });
+  });
 
   const joinInput = document.getElementById('join-code');
   const doJoin = () => {
